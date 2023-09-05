@@ -26,7 +26,6 @@ import Interpolations: LinearInterpolation
 using NumericalIntegration
 import NumericalIntegration as nui
 using Term.Progress
-using PyPlot
 include("./SpecHelpers.jl")
 using .SpecHelpers
 
@@ -668,14 +667,14 @@ function make_lines_mask(mod::Model; window_width_kms::Float64=1000., plot_it::B
         @debug "Make line mask: " wave window_width_ang
         mask[cenwave-window_width_ang .< wave .< cenwave+window_width_ang] .= 1
     end 
-    if plot_it == true
-        plt.plot(coords(mod.domain), mod())
-        for comp in keys(mod.buffers)
-            comp == :main && continue
-            plt.plot(coords(mod.domain), mod.buffers[comp])
-        end 
-        plt.plot(coords(mod.domain), mask .* 0.5 .* maximum(mod()))
-    end 
+    # if plot_it == true
+    #     plt.plot(coords(mod.domain), mod())
+    #     for comp in keys(mod.buffers)
+    #         comp == :main && continue
+    #         plt.plot(coords(mod.domain), mod.buffers[comp])
+    #     end 
+    #     plt.plot(coords(mod.domain), mask .* 0.5 .* maximum(mod()))
+    # end 
     return mask
 end 
 

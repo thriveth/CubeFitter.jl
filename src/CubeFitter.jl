@@ -558,13 +558,13 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
             mod[comp].redshift.high = cube.z_init + cube.z_init * 0.1
             mod[comp].redshift.patch = Symbol(cube.ref_line)
             mod[comp].fwhm_kms.patch = Symbol(cube.ref_line)
-            mod[comp].fwhm_kms.low = 10.
+            mod[comp].fwhm_kms.low = 1.
             mod[comp].fwhm_kms.high = 2000.
             mod[comp].norm.low = 0.
             mod[comp].lsf.fixed = true
         else
             @debug "Fixing parameters for $comp"
-            mod[comp].fwhm_kms.low = 10.
+            mod[comp].fwhm_kms.low = 1.
             mod[comp].fwhm_kms.high = 2000.
             mod[comp].redshift.low = cube.z_init - cube.z_init * 0.1
             mod[comp].redshift.high = cube.z_init + cube.z_init * 0.1

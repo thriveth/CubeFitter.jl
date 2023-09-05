@@ -10,3 +10,9 @@ Development is still in early days, so everything may break - but the
 NIRSpec related code Works For Me™.
 
 Better README to come. 
+
+## Screens
+
+There really isn't much to look at but here it is:
+
+![Screenshot of CubeFitter in action](./Screenshots/CubeFitter.png)

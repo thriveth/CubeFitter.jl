@@ -6,8 +6,8 @@ export AbstractSpectralCube, NIRSpecCube, MUSECube
 ###===========================================###
 
 # Basic computing functionality, misc.
-using Base: available_text_colors_docstring
-using Base.Threads, Printf, LoggingExtras
+using Base: available_text_colors_docstring, NullLogger
+using Base.Threads, Printf, Logging, LoggingExtras
 # Handle NaN's more gracefully than standard Julia
 using NaNStatistics
 # Physical units and unit conversion, and uncertainties
@@ -34,7 +34,7 @@ const caps = SpeedOfLightInVacuum |> u"Å/s"
 # datapath = "./static_data/"
 # datapath = joinpath(@__DIR__, "..", "static_data")
 # println(@__MODULE__)
-datapath = joinpath(dirname(pathof(MyPackage)), "..", "static_data")
+datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
 # include("./SpectralCubes.jl")
 # using .SpectralCubes
 
@@ -54,32 +54,32 @@ function set_logging_level(
         filename = stderr
     end 
     # if level == :info
-    #     @info "Setting logging level to info-only"
+    #     #@info "Setting logging level to info-only"
     #     global_logger(logger(filename, Logging.Info))
     #     # global_logger(ConsoleLogger(stderr, Logging.Info))
     # elseif level == :none
-    #     @info "Turning off logging"
+    #     #@info "Turning off logging"
     #     global_logger(NullLogger());
     # elseif level == :warning
-    #     @info "Including info and warnings in feedback"
+    #     #@info "Including info and warnings in feedback"
     #     global_logger(logger(filename, Logging.Warn))
     # elseif level == :debug
-    #     @info "Turning on full, debuggin-level logging"
+    #     #@info "Turning on full, debuggin-level logging"
     #     global_logger(logger(filename, Logging.Debug))
     # else
     #     println("""Please chose a valid level.""")
     # end 
     if level == :info
-        @info "Setting logging level to info-only"
+        #@info "Setting logging level to info-only"
         global_logger(ConsoleLogger(stderr, Logging.Info))
     elseif level == :none
-        @info "Turning off logging"
+        #@info "Turning off logging"
         global_logger(NullLogger());
     elseif level == :warning
-        @info "Including info and warnings in feedback"
+        #@info "Including info and warnings in feedback"
         global_logger(ConsoleLogger(stderr, Logging.Warn))
     elseif level == :debug
-        @info "Turning on full, debuggin-level logging"
+        #@info "Turning on full, debuggin-level logging"
         global_logger(ConsoleLogger(stderr, Logging.Debug))
     else
         println("""Please chose a valid level.""")
@@ -87,7 +87,8 @@ function set_logging_level(
 end 
 
 # global_logger(ConsoleLogger(stderr, Logging.Info))  # Default
-global_logger(FileLogger("CubeFitter.log"))  # Default
+global_logger(NullLogger())
+# global_logger(FileLogger("CubeFitter.log"))  # Default
 
 
 # include("SpectralCubes.jl")
@@ -221,7 +222,7 @@ are named "jwst_nirspec_[grating]_disp.fits", as fetched from the official JDox.
 function get_resolving_power_nirspec(grating::String; calib_path=datapath)  #"./static_data/")
     lsffilename = "jwst_nirspec_$(grating)_disp.fits"
     @debug "Path to LSF file: " calib_path * lsffilename
-    fitsfile = FITS(calib_path * lsffilename)
+    fitsfile = FITS(joinpath(calib_path, lsffilename))
     angwave = read(fitsfile[2], "WAVELENGTH") * u"μm" .|> u"angstrom"
     R = read(fitsfile[2], "R")
     @debug extrema(angwave) extrema(R)
@@ -253,11 +254,11 @@ function convert_ergscms_Å_units(datadict::Dict, instrument="NIRSPec")
     # Make sure data and waves have correct units
     flam_unit = u"erg/s/cm^2/Å"
     if unique(dimension.(data)) != dimension(flam_unit)
-        @info "Data unit dimension not equivalent to $flam_unit, converting."
+        #@info "Data unit dimension not equivalent to $flam_unit, converting."
         data = toggle_fnu_flam(data, wave)
         errs = toggle_fnu_flam(errs, wave)
     else
-        @info "Data unit was equal to or equivalent to $flam_unit"  #("Smooth dims bro!")
+        #@info "Data unit was equal to or equivalent to $flam_unit"  #("Smooth dims bro!")
     end
 
     data = uconvert.(flam_unit, data)
@@ -364,7 +365,7 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
     if !(cube.ref_line in keys(lmod)); return NaN; end
     try  # Too many things can go wrong to catch eatch one separately.
         results, stats = gmf.fit(lmod, lmeas)
-        @info "Successfully fitted (col. $xrange, row $yrange)"
+        #@info "Successfully fitted (col. $xrange, row $yrange)"
         @debug results stats
         output = Dict(
             :wave => goodwave,
@@ -375,7 +376,7 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
             :fitstats => stats)
         return output 
     catch
-        @warn "Fitting (col. $xrange, row $yrange) failed! Moving on"
+        #@warn "Fitting (col. $xrange, row $yrange) failed! Moving on"
         return NaN
     end 
 end
@@ -430,7 +431,7 @@ function fit_cube(cube)
             nanratio = numnan/length(cube.wave)
             @debug "Number of nans in x=$x, y=$y: " numnan size(cube.fluxcube) nanratio
             if nanratio > 0.5
-                @warn "Pixel ($x, $y) has > 50% NaN; moving on"
+                #@warn "Pixel ($x, $y) has > 50% NaN; moving on"
                 continue
             end
             fitdict = fit_spectrum_from_subcube(cube, xrange=(x:x), yrange=(y:y))
@@ -754,7 +755,7 @@ end
 function load_neblines(infile="./static_data/neblines.dat")
     lines = CSV.File(infile, delim=" ", ignorerepeated=true, comment="#") |> DataFrame
     select!(lines, [:name, :lamvac, :lamair, :foverha])
-    @info "Loaded list of nebular lines"
+    #@info "Loaded list of nebular lines"
     return lines
 end 
 

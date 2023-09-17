@@ -82,3 +82,5 @@ In order of approximate priority:
 - [ ] Make it possible to add a second and perhaps third kinematic component. 
 - [ ] Add support for more instruments. Suggestions welcome (especially if accompanied
       with a suitable test dataset).
+- [ ] Write quicklook-functions allowing to quickly view the fit outputs with minimum
+      input. But still be tinker-friendly, don't hide stuff from the user.

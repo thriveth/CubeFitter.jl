@@ -70,3 +70,15 @@ convenience. See the function docstring to learn more.
 There really isn't much to look at but here it is:
 
 ![Screenshot of CubeFitter in action](./Screenshots/CubeFitter.png)
+
+
+## Planned features / whishlist
+
+In order of approximate priority: 
+
+- [ ] Test and ensure the `MUSECube` struct actually works as advertised
+- [ ] Allow for measuring flux or upper limits in lines that are currently excluded as
+      having too low S/N ratio.
+- [ ] Make it possible to add a second and perhaps third kinematic component. 
+- [ ] Add support for more instruments. Suggestions welcome (especially if accompanied
+      with a suitable test dataset).

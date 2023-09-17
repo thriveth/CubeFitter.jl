@@ -37,11 +37,16 @@ A simple example of a session using `CubeFitter.jl`:
 ```julia
 cube = NIRSpecCube("/path/to/datacube.fits")
 out = fit_cube(cube)
+write_to_fits("/desired/path/to/output/file.fits", out)
 ```
-This will return a dictionary of $N\times M \times 3$ arrays, one for each fitted line, as
+
+It is assumed that the data in datacube.fits is already continuum subtracted. 
+
+This code will return a dictionary of $N\times M \times 3$ arrays, one for each fitted line, as
 well as one for the 0th to 2nd moment, the spaxel-wise redshift, and line width. Each
 such array will have the measured values as the first slice, the parameter error in the
-second slice, and the fit statistics in the last.
+second slice, and the fit statistics in the last. Each of these slices will be saved as an
+individual HDU in the output FITS file.
 
 The function fit_cube is mainly a convenience function enabling one to cycle through every
 spaxel in the cube, and running the fits with default settings. One can also use the

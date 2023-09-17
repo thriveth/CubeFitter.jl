@@ -13,6 +13,12 @@ related code Works For Me™. I am in the process of testing it for MUSE, and mo
 instruments should be quite easy to add as well.
 
 
+## What does it do (and how)?
+
+The workhorses of this package are the various `struct`'s `NIRSpecCube`, `MUSECube`, etc.;
+as well as the functions `fit_cube()`, and `fit_spectrum_from_subcube()`.
+
+
 ## Enabling the package
 
 This package is not yet registered to install (maybe later). To run it now, clone the

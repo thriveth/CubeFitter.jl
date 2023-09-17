@@ -9,9 +9,9 @@ Hopefully, this could develop into a more general package for handling spectral 
 Julia.
 
 Development is still in early days, so everything may break - but the NIRSpec related code
-Works For Me™.
+Works For Me™. I am in the process of testing it for MUSE, and most other instruments
+should be quite easy to add as well.
 
-Better README to come.
 
 ## Enabling the package
 
@@ -19,10 +19,16 @@ This package is not yet registered to install (maybe later). To run it now, clon
 repository to your preferred location; then:
 
 ```julia
-julia> ]
-pkg> activate /path/to/CubeFitter.jl
+julia> import Pkg
+julia> Pkg.activate("/path/to/CubeFitter.jl")
+julia> Pkg.instantiate()  # Install dependencies, needs only be done once.
 julia> using CubeFitter
 ```
+
+Alternatively, you can enter the `Pkg>` prompt, run `activate /path/to/CubeFitter.jl`,
+then (first time) `instantiate()`. Press Backspace to return to the normal `julia>`
+prompt, and run `using CubeFitter`. 
+
 
 ## Example usage
 

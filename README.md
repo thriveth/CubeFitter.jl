@@ -24,7 +24,7 @@ as well as the functions `fit_cube()`, and `fit_spectrum_from_subcube()`.
 This package is not yet registered to install (maybe later). To run it now, clone the
 repository to your preferred location; then:
 
-```julia
+```julia-repl
 julia> import Pkg
 julia> Pkg.activate("/path/to/CubeFitter.jl")
 julia> Pkg.instantiate()  # Install dependencies, needs only be done once.
@@ -39,11 +39,11 @@ prompt, and run `using CubeFitter`.
 ## Example usage
 
 A simple example of a session using `CubeFitter.jl`:
-
-```julia
-cube = NIRSpecCube("/path/to/datacube.fits")
-out = fit_cube(cube)
-write_to_fits("/desired/path/to/output/file.fits", out)
+	
+```julia-repl
+julia> cube = NIRSpecCube("/path/to/datacube.fits")
+julia> out = fit_cube(cube)
+julia> write_to_fits("/desired/path/to/output/file.fits", out)
 ```
 
 It is assumed that the data in datacube.fits is already continuum subtracted. 

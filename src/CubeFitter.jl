@@ -343,8 +343,7 @@ end
 Only returns one fit result; if a region of many pixels are given, they are first combined
 to one spectrum; then fitted.
 ## Returns
-- `GModelFit.ModelSnapshot`: Result of the fit
-- `GModelFit.FitStats`: A separate object holding simple statistics about the last run.
+- `Dict`: A dict containing wave, spectrum, errors, fit result and fit statistics.
 """
 function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
     wave_init = cube.wave
@@ -418,7 +417,6 @@ function makeresultdict(cube)
     @debug "Output dict successfully done!"
 return slices_dict
 end
-
 
 
 function fit_cube(cube)
@@ -584,13 +582,26 @@ end
 function _gauss_line(
     waves::Array, lab_wave::Float64, redshift::Float64, fwhm_kms::Float64, norm::Float64, lsf::Float64)  #, grating="g140h")
     cen_wave = lab_wave * (1. + redshift)
-    fwhm_inst = ustrip(ckms) / lsf  # get_resolving_power(
+    fwhm_inst = cen_wave / lsf  # get_resolving_power(
         # cen_wave, instrument=instrument, order=order, grism=grating)
-    fwhm_tot = sqrt(fwhm_inst^2 + fwhm_kms^2)
-    sigma_aa = fwhm_tot / ckms * cen_wave / (2*sqrt(2*log10(2)))
+    fwhm_aa = v_to_deltawl(fwhm_kms, cen_wave)
+    #= fwhm_tot = sqrt(fwhm_inst^2 + fwhm_kms^2) =#
+    fwhm_tot = sqrt(fwhm_inst^2 + fwhm_aa^2)
+    sigma_aa = fwhm_to_sigma(fwhm_tot)
+    #= sigma_aa = fwhm_tot / ckms * cen_wave / (2*sqrt(2*log10(2))) =#
     flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm
     return flux
 end
+#= function _gauss_line( =#
+#=     waves::Array, lab_wave::Float64, redshift::Float64, fwhm_kms::Float64, norm::Float64, lsf::Float64)  #, grating="g140h") =#
+#=     cen_wave = lab_wave * (1. + redshift) =#
+#=     fwhm_inst = ustrip(ckms) / lsf  # get_resolving_power( =#
+#=         # cen_wave, instrument=instrument, order=order, grism=grating) =#
+#=     fwhm_tot = sqrt(fwhm_inst^2 + fwhm_kms^2) =#
+#=     sigma_aa = fwhm_tot / ckms * cen_wave / (2*sqrt(2*log10(2))) =#
+#=     flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm =#
+#=     return flux =#
+#= end =#
 
 
  
@@ -762,7 +773,8 @@ function load_neblines(infile="./static_data/neblines.dat")
 end 
 
 
-
+"""    fill_in_fit_values(dict::Dict, fitresults::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)
+"""
 function fill_in_fit_values!(
     dict::Dict{Any,Any}, fitresults::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)
     row, column = pix_coords

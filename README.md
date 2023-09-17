@@ -9,7 +9,7 @@ Hopefully, this could develop into a more general package for handling spectral 
 Julia.
 
 Development is still in early days, so everything may break - but currently, the NIRSpec
-related code Works For Me™. I am in the process of testing it for MUSE, and most other
+related code _Works For Me™_. I am in the process of testing it for MUSE, and most other
 instruments should be quite easy to add as well.
 
 

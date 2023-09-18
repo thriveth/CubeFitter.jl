@@ -19,7 +19,9 @@ The workhorses of this package are the various `struct`'s `NIRSpecCube`, `MUSECu
 as well as the functions `fit_cube()`, and `fit_spectrum_from_subcube()`.
 
 
-## Enabling the package
+## Usage
+
+### Enabling the package
 
 This package is not yet registered to install (maybe later). To run it now, clone the
 repository to your preferred location; then:
@@ -35,8 +37,7 @@ Alternatively, you can enter the `Pkg>` prompt, run `activate /path/to/CubeFitte
 then (first time) `instantiate()`. Press Backspace to return to the normal `julia>`
 prompt, and run `using CubeFitter`. 
 
-
-## Example usage
+### Quick example
 
 A simple example of a session using `CubeFitter.jl`:
 
@@ -64,6 +65,16 @@ given (_x, y_) range, runs the fit, and return a dictionary of the fit results a
 statistics, along with the extracted spectrum, errors, and wavelength range for
 convenience. See the function docstring to learn more.
 
+### Data format
+
+`CubeFitter.jl` expects the data to already be continuum subtracted,
+but otherwise saved in the same data format as the final pipeline
+products of a given instrument. Using JWST/NIRSpec as an example, this
+means that the data cubes should be saved as a FITS file with an empty
+primary HDU, and the flux and error cubes saved as the first and
+second extensions, respectively. At the moment, this requirement is
+hardcoded, and any other formats will either throw an error or, at
+worst, yield wrong and meaningless results.
 
 ## Screens
 

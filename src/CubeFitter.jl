@@ -4,9 +4,9 @@ module CubeFitter
 export AbstractSpectralCube, NIRSpecCube, MUSECube
 export calculate_moments, fit_cube, fit_spectrum_from_subcube
 export make_spectrum_from_cutout, make_lines_mask, toggle_fnu_flam
+###============================================================###
 
 using Measurements: result
-###===========================================###
 
 # Basic computing functionality, misc.
 using Base: available_text_colors_docstring, NullLogger
@@ -14,7 +14,6 @@ using Base.Threads, Printf, Logging, LoggingExtras
 # Handle NaN's more gracefully than standard Julia
 using NaNStatistics
 # Physical units and unit conversion, and uncertainties
-# using Unitful, UnitfulAstro, UnitfulEquivalences, Measures, PhysicalConstants.CODATA2018
 using Unitful, UnitfulAstro, UnitfulEquivalences, Measurements, PhysicalConstants.CODATA2018
 # Data formats, table, the works
 using FITSIO, DataFrames, DataStructures, CSV
@@ -33,9 +32,6 @@ using .SpecHelpers
 const ckms = SpeedOfLightInVacuum |> u"km/s"
 const caps = SpeedOfLightInVacuum |> u"Å/s"
 
-# datapath = "./static_data/"
-# datapath = joinpath(@__DIR__, "..", "static_data")
-# println(@__MODULE__)
 datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
 # include("./SpectralCubes.jl")
 # using .SpectralCubes
@@ -55,33 +51,13 @@ function set_logging_level(
         logger = ConsoleLogger
         filename = stderr
     end 
-    # if level == :info
-    #     #@info "Setting logging level to info-only"
-    #     global_logger(logger(filename, Logging.Info))
-    #     # global_logger(ConsoleLogger(stderr, Logging.Info))
-    # elseif level == :none
-    #     #@info "Turning off logging"
-    #     global_logger(NullLogger());
-    # elseif level == :warning
-    #     #@info "Including info and warnings in feedback"
-    #     global_logger(logger(filename, Logging.Warn))
-    # elseif level == :debug
-    #     #@info "Turning on full, debuggin-level logging"
-    #     global_logger(logger(filename, Logging.Debug))
-    # else
-    #     println("""Please chose a valid level.""")
-    # end 
     if level == :info
-        #@info "Setting logging level to info-only"
         global_logger(ConsoleLogger(stderr, Logging.Info))
     elseif level == :none
-        #@info "Turning off logging"
         global_logger(NullLogger());
     elseif level == :warning
-        #@info "Including info and warnings in feedback"
         global_logger(ConsoleLogger(stderr, Logging.Warn))
     elseif level == :debug
-        #@info "Turning on full, debuggin-level logging"
         global_logger(ConsoleLogger(stderr, Logging.Debug))
     else
         println("""Please chose a valid level.""")
@@ -92,8 +68,6 @@ end
 global_logger(NullLogger())
 # global_logger(FileLogger("CubeFitter.log"))  # Default
 
-
-# include("SpectralCubes.jl")
 
 # Declaring an abstract SpectralCube type will allow us to make SpectralCube objects
 # inheriting from it for various ls instruments, which require different treatments and
@@ -317,7 +291,9 @@ end
 
 
 """    make_spectrum_from_cutout()
-Converts fnu data to flam units, and vice versa.
+
+Convert fnu data to flam units, and vice versa.
+
 Input must be Unitful™ (i.e., Quantities).
 """
 function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)
@@ -339,13 +315,47 @@ end
 
 
 
-"""    fit_subcube(cube[; xrange=nothing, yrange=nothing])
-Only returns one fit result; if a region of many pixels are given, they are first combined
-to one spectrum; then fitted.
-## Returns
+"""
+    fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
+
+Extract a subcube as a spectrum, and pass it to the 1D spectrum fitter. 
+
+This is the main workhorse of the user-facing functions in this package. Given any two
+pixel ranges, it extrancts the spectrum and error vector from the cube in these ranges. If
+not passed any range in a direction, it uses the entire available pixel range in that
+direction.
+
+To only use one row, column or spaxel, just pass in its pixel value as both start and end
+of the range.
+
+For a convenient wrapper around this function which fits an entire cube spaxel-by-spaxel,
+see `fit_cube`.
+
+# Arguments
+Required arguments:
+- `cube::AbstractSpectralCube`: The spectral cube object to fit. Must be one of the
+  instrument-specific types of struct defined by this package.
+Keyword arguments:
+- `xrange::UnitRange{Int}`: A range (e.g. `2:3`) of x-axis pixel coordinates to include in
+  the extracted spectrum.
+- `yrange::UnitRange{Int}`: Same as `xrange`, but for y-axis coordinates.
+
+# Returns
 - `Dict`: A dict containing wave, spectrum, errors, fit result and fit statistics.
+
+# Examples
+Extract and fit spectrum for the 10th to 15th columns, 12th to 17th row of a cube:
+```julia-repl
+julia> fit_spectrum_from_subcube(cube, xrange=10:15, yrange=12:17)
+```
+Extract the spectrum from the spaxel with coordinates 33, 44:
+```julia-repl
+julia> fit_spectrum_from_subcube(cube, xrange=33:33, yrange=44:44)
+```
 """
 function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
+    if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
+    if isa(yrange, Nothing); yrange=range(1, size(cube.fluxcube)[2]); end
     wave_init = cube.wave
     spec, errs = make_spectrum_from_cutout(cube, xrange, yrange)
     @debug "Before NaNmask10'ing: " count(isnan.(spec)) count(isnan.(errs))
@@ -415,10 +425,19 @@ function makeresultdict(cube)
     slices_dict[:mom2] = zeros(xsize, ysize, 3) .* NaN
     slices_dict[:fitstats] = zeros(xsize, ysize) .* NaN
     @debug "Output dict successfully done!"
-return slices_dict
+    return slices_dict
 end
 
 
+"""
+    fit_cube(cube)
+Fit the entire cube spaxel-by-spaxel.
+
+This is a convenience function to perform that one action we want to perform 90% of the time.
+It does not offer any settings or tweaks, use the function `fit_spectrum_from_subcube` for
+these cases. This is basically just a wrapper around that one anyway, to save the typing of the
+most likely standard settings.
+"""
 function fit_cube(cube)
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
     slices_dict = makeresultdict(cube)
@@ -449,32 +468,32 @@ function fit_cube(cube)
     slices_dict[:mom0] = mom0
     slices_dict[:mom0] = mom1
     slices_dict[:mom0] = mom2
-return slices_dict
+    return slices_dict
 end 
 
 
 
-# TODO: Make sure docstring is up to date! 
-# TODO: Could perhaps be `setting` for generality? 🤔
-"""    build_model(cube[; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100, dom_init=nothing])
+"""    build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100, dom_init=nothing)
 Builds the `GModelFit.Model` object necessary for fitting the lines.
+
 The model assumes that each line is described as a single Gaussian profile, with a shared
 `redshift` and velocity width `fwhm`, while their individual fluxes are left as free parameters
 (including lines which actually have fixed line ratios, which might not have that in the ). 
-## Input
-- `domain::GModelFit.Domain{1}`: A Domain object containing the wavelength range on which
+# Arguments
+Required arguments:
+- `cube::AbstractSpectralCube`: A Domain object containing the wavelength range on which
   the model should be defined.
-- `neblines::DataFrame`: The dataframe containing results from `load_neblines`.
-- `redsh::Float64`: An initial guess for the redshift of the object we're looking at.
-## Optional input
-- `fwhm_int::Float64`: The initial guess for the physical (*not* observed) FWHM of the
-  line, in units of km/s. Default = 100.
-- `instrument::String`: Either 'NIRSpec' or 'MUSE' for the time being. Default is 'NIRSpec'.
-- `order::Int`: Order of the polynomial to fit. Only relevant if `instrument`='MUSE'.
-  Defaults to 3.
-- `grism::String`: Should actually be `grating`. Only relevant for 'NIRSpec', at the time
-  being. Default value is 'g140h'. 
-## Output
+Optional arguments:
+- `xrange::UnitRange{Int}`: The range of x-axis pixels to include in the fit; defaults to all.
+- `yrange::UnitRange{Int}`: The range of y-axis pixels to include in the fit; defaults to all.
+- `min_snr::Float64`: Minimum estimated SNR for a line to be included in the fit. Defaults to
+  1.5. This is the SNR that is estimated numerically; set it to 0 to make sure no lines are
+  dropped when building the model.
+- `fwhm_int::Float64`: The initial guess of FWHM of the line, given in km/s. Defaults to 100.
+- `dom_init::GModelFit.Domain`: For finer control of which wavelength ranges can be included in
+  the fit, pass a domain (will default to the full wl range in the cube otherwise).
+  This is the maximum allowed domain to include, parts of it might still be excluded by the function.
+# Returns
 - `model::GModelFit.Model`: The model containing the prescribed lines. The Reference line has
   norm=1., and the others are scaled according to the values of `foverha` given in the line list
   input file.
@@ -572,7 +591,7 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
         end 
     end 
     @debug "`build_model()` successfully done!"
-    return mod  #, components
+    return mod
 end 
 
 
@@ -606,18 +625,22 @@ end
 
  
 """
+    calculate_moments(cube; refline=nothing, window_kms=1000)
 Computes moments of a flux slab with associated wavelengths.
+
 Computes the 0th, 1st and 2nd moments of a spectral chunk (a line map) in one or more
-pixels.
-## Input:
-- `waves::Array{Float64, 1}`: Wavelength array, must be 1-dimensionsl (a vector)
-- `flux::Array{Float64, 2}`: The flux (or rather flux density) data, must be 3-dimensional.
-Errors/uncertainties are not included in this computation
-## Returns
+pixels. Errors/uncertainties are not included in this computation.
+# Arguments
+Required arguments:
+- `cube::AbstractSpectralCube`: Datacube struct to be computed.
+Optional arguments:
+- `refline::Symbol`: The line to integrate, if not the default one set in the `cube`.
+- `window_kms::Float64`: Width of the spectroscopic range included in the calculation,
+  given in km/s.
+# Returns
 - A tuple of three 2D arrays (images) of the moments mapped to each spatial pixel.
 """
-# function calculate_moments(waves::Array{Float64, 1}, flux::Array{Float64, 3})
-function calculate_moments(cube; refline=nothing, window_kms=1000)
+function calculate_moments(cube; refline=nothing, window_kms::Float64=1000)
     if isa(refline, Nothing)
         refline = cube.ref_line
     end 
@@ -658,7 +681,7 @@ end
 
 
 
-"""    make_lines_mask(mod[; window_width_kms, plot_it])
+"""    make_lines_mask(mod; window_width_kms=1000, plot_it=false)
 Creates a mask which keeps data in a window around each line in the model, and discards
 the rest. The window width is customizable.
 ## Input
@@ -694,10 +717,10 @@ end
 """    nanmask10(flux, dflux)
 Removes wave/velocity bins in which wither spec or errs are NaN, or where either is == 0.
 The `flux` and `dflux` (error) arrays must have the same size.
-## Input:
+# Arguments:
 - `flux::Array{Float64}` - the flux (flux density) array.
 - `dflux::Array{Float64}` - the standard errors to the flux
-## Returns:
+# Returns:
 - A Tuple of the same two arrays, with the `NaN` values replaced as described above.
 """
 function nanmask10(
@@ -710,8 +733,7 @@ end
 
 
 """    gauss(λ::Array, σ::Float64, μ::Float64)
-A simple normalized Gaussian with an integral of 1.
-Takes as input wavelength array, and values of line center μ and line width σ.
+Return a simple normalized Gaussian with an integral of 1.
 """
 function gauss(λ::Array,  σ::Float64, μ::Float64)
     g = @. 1/σ/sqrt(2π) * exp(-(λ - μ)^2/2/σ^2)
@@ -720,7 +742,9 @@ end
 
 
 
-""" Quick and coarse estimate of the integrated flux within a wavelength window
+"""
+    estimate_line_snr(wave, flux; err=nothing)
+Quick and coarse estimate of the integrated flux within a wavelength window
 without actual fitting.
 """
 function estimate_line_snr(wave, flux; err=nothing)
@@ -740,7 +764,7 @@ end
 
 
 
-"""     get_resolving_power_muse([, order=3])
+"""     get_resolving_power_muse(; order=3)
 ## Optional arguments
 - `order::Int`: The order of the polynomial to fit to the datapoints. Default is 3.
 ## Returns
@@ -760,8 +784,8 @@ function get_resolving_power_muse(;order=3::Int)
 end
 
 
-""" load_neblines(infile)
-## Input:
+"""    load_neblines(infile)
+# Arguments
 - `filepath::String`: The file to use. Must be a whitespace separated file,
   containing at least the columns 'name', 'lamvac', 'lamair', and 'foverha'.
 """
@@ -798,7 +822,7 @@ end
 
 
 
-""" `write_to_fits(filepath, mapsdict)`
+"""    write_to_fits(filepath, mapsdict)
 """
 function write_to_fits(filepath::String, mapsdict::Dict)
     f = FITS(filepath, "w")

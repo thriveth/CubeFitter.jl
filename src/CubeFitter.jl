@@ -74,6 +74,11 @@ global_logger(NullLogger())
 # different kind of, and still be able to write functions which can operate on all of them. 
 abstract type AbstractSpectralCube end
 
+"""
+Thus far, this is not actually implemented.
+It is planned to be a barebones solution for cubes that are not from any of the
+explicitly supported.
+"""
 mutable struct GenericSpectralCube <: AbstractSpectralCube
     instrument::String
     wave::Array
@@ -81,6 +86,11 @@ mutable struct GenericSpectralCube <: AbstractSpectralCube
     errscube::Array
 end
 
+"""
+    NIRSpecCube(filepath, grating; <keyword arguments>)
+Load data from a JWST/NIRSpec IFU datacube into a Julia `struct`.
+# Arguments
+"""
 mutable struct NIRSpecCube <: AbstractSpectralCube
     """ A struct representing a NIRSpec IFU datacube"""
     grating::String
@@ -94,9 +104,7 @@ mutable struct NIRSpecCube <: AbstractSpectralCube
     z_init
     ref_line
     function NIRSpecCube(filepath::String, grating::String;
-        # linelist_path="./static_data/neblines.dat",
         linelist_path=joinpath(datapath, "neblines.dat"),
-        # lsf_file_path="./static_data/jwst_nirspec_$(grating)_disp.fits",
         lsf_file_path=joinpath(datapath, "jwst_nirspec_$(grating)_disp.fits"),
         z_init=0, reference_line=:OIII_5007)
 
@@ -114,7 +122,8 @@ mutable struct NIRSpecCube <: AbstractSpectralCube
 end
 
 
-"""    MUSECube(filepath[, linelist_path="])
+"""
+    MUSECube(filepath; linelist_path)
 """
 mutable struct MUSECube <: AbstractSpectralCube
     setting::String
@@ -124,8 +133,19 @@ mutable struct MUSECube <: AbstractSpectralCube
     linelist::DataFrame
     lsf_fitter
     function MUSECube(filepath::String;
-                      linelist_path=:)
+                      linelist_path::String=joinpath(datapath, "neblines.dat"),
+                      lsf_polynomium_degree::Int=3,
+                      )
+
         ddict = load_fits_cube(filepath, "r")
+        linelist = load_neblines(linelist_path)
+        ddict = convert_ergscms_Å_units(ddict, "MUSE")
+        wave = ustrip.(ddict[:Wave])
+        fluxcube = ustrip.(ddict[:Data])
+        errscube = ustrip.(ddict[:Errs])
+        header = ddict[:Header]
+        primheader = ddict[:Primheader]
+        itp = get_resolving_power("NIRSpec", setting=lsf_polynomium_degree)
     end
 end
 

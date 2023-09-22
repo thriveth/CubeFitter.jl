@@ -660,7 +660,7 @@ Optional arguments:
 # Returns
 - A tuple of three 2D arrays (images) of the moments mapped to each spatial pixel.
 """
-function calculate_moments(cube; refline=nothing, window_kms::Float64=1000)
+function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
     if isa(refline, Nothing)
         refline = cube.ref_line
     end 
@@ -830,13 +830,17 @@ function fill_in_fit_values!(
     dict[:redshift][row, column, 2] = fitresults[Symbol(dict[:refline])].redshift.unc
     dict[:fwhm][row, column, 1] = fitresults[Symbol(dict[:refline])].fwhm_kms.val
     dict[:fwhm][row, column, 2] = fitresults[Symbol(dict[:refline])].fwhm_kms.unc
+    fwhmu = dict[:fwhm][row, column, 1] ± dict[:fwhm][row, column, 2]
+    sigmau = fwhm_to_sigma(fwhmu)
     for l in keys(dict)
         if !(l in keys(fitresults))
             continue
         end
-        dict[l][row, column, 1] = fitresults[l][:norm].val
-        dict[l][row, column, 2] = fitresults[l][:norm].unc
-        dict[l][row, column, 3] = fitresults[l][:norm].val / fitresults[l][:norm].unc
+        normu = fitresults[l][:norm].val ± fitresults[l][:norm].unc
+        fluxu = sqrt(2π) * sigmau * normu
+        dict[l][row, column, 1] = fluxu.val
+        dict[l][row, column, 2] = fluxu.err
+        dict[l][row, column, 3] = fluxu.val/fluxu.err
     end
 end
 

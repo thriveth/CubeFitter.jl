@@ -42,7 +42,7 @@ prompt, and run `using CubeFitter`.
 A simple example of a session using `CubeFitter.jl`:
 
 ```julia
-julia> cube = NIRSpecCube("/path/to/datacube.fits")
+julia> cube = NIRSpecCube("/path/to/datacube.fits", "g140m"; z_init=2.43)
 julia> out = fit_cube(cube)
 julia> write_to_fits("/desired/path/to/output/file.fits", out)
 ```

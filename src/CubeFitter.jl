@@ -312,10 +312,7 @@ end
 
 
 """    make_spectrum_from_cutout()
-
-Convert fnu data to flam units, and vice versa.
-
-Input must be Unitful™ (i.e., Quantities).
+Convert fnu data to flam units, and vice versa. Input must be Unitful™ (i.e., Quantities).
 """
 function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)
     if isa(xrange, Nothing); xrange = (1:size(cube.fluxcube)[1]); end
@@ -374,7 +371,7 @@ Extract the spectrum from the spaxel with coordinates 33, 44:
 julia> fit_spectrum_from_subcube(cube, xrange=33:33, yrange=44:44)
 ```
 """
-function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
+function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_component=false)
     if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
     if isa(yrange, Nothing); yrange=range(1, size(cube.fluxcube)[2]); end
     wave_init = cube.wave
@@ -384,19 +381,22 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
     goodwave, goodspec, gooderrs = wave_init[notnan], spec[notnan], errs[notnan]
     # @debug xrange yrange goodwave, count(notnan)
     @debug "Goodwave: " goodwave
-    mod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(goodwave))
+    mod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(goodwave),
+        broad_component=broad_component)
     @debug "First pass at making model done!"
     idx = make_lines_mask(mod)
     @debug "Made lines mask for $xrange, $yrange !"
     lwave, lspec, lerrs = goodwave[idx], goodspec[idx], gooderrs[idx]
     @debug "Before and after line masking: " length(goodwave), length(lwave)
     if length(lwave) == 0; return NaN; end
-    lmod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(lwave))
+    lmod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(lwave),
+        broad_component=broad_component)
     lmeas = Measures(Domain(lwave), lspec, lerrs)
     @debug "Model before fitting: $xrange, $yrange:  " lmod lmeas lwave
     if !(cube.ref_line in keys(lmod)); return NaN; end
     try  # Too many things can go wrong to catch eatch one separately.
-        results, stats = gmf.fit(lmod, lmeas)
+        # results, stats = gmf.fit(lmod, lmeas)
+        results, stats = gmf.fit(lmod, lmeas, minimizer=gmf.lsqfit())
         #@info "Successfully fitted (col. $xrange, row $yrange)"
         @debug results stats
         output = Dict(
@@ -415,7 +415,7 @@ end
 
 
 
-function makeresultdict(cube)
+function makeresultdict(cube; broad_component=false)
     @debug "Making output dict"
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
     neblines = cube.linelist
@@ -438,6 +438,9 @@ function makeresultdict(cube)
         if comp == :main; continue; end
         slice = zeros(xsize, ysize, 3) .* NaN
         slices_dict[comp] = slice
+        if broad_component
+           slices_dict[Symbol(String(comp) * "_broad")] = copy(slice)
+        end
     end 
     slices_dict[:redshift] = zeros(xsize, ysize, 3) .* NaN
     slices_dict[:fwhm] = zeros(xsize, ysize, 3) .* NaN
@@ -445,6 +448,11 @@ function makeresultdict(cube)
     slices_dict[:mom1] = zeros(xsize, ysize, 3) .* NaN
     slices_dict[:mom2] = zeros(xsize, ysize, 3) .* NaN
     slices_dict[:fitstats] = zeros(xsize, ysize) .* NaN
+    if broad_component
+        slices_dict[:refline_broad] = Symbol(String(cube.ref_line) * "_broad")
+        slices_dict[:redshift_broad] = zeros(xsize, ysize, 3) .* NaN
+        slices_dict[:fwhm_broad] = zeros(xsize, ysize, 3) .* NaN
+    end
     @debug "Output dict successfully done!"
     return slices_dict
 end
@@ -458,10 +466,12 @@ This is a convenience function to perform that one action we want to perform 90%
 It does not offer any settings or tweaks, use the function `fit_spectrum_from_subcube` for
 these cases. This is basically just a wrapper around that one anyway, to save the typing of the
 most likely standard settings.
+The only one thing that is settable here is whether to include a second, broader kinematic
+component in the model. 
 """
-function fit_cube(cube)
+function fit_cube(cube; broad_component=false)
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
-    slices_dict = makeresultdict(cube)
+    slices_dict = makeresultdict(cube, broad_component=broad_component)
     @debug "Made slices_dict"
     @track for x in 1:xsize
         for y in 1:ysize
@@ -474,7 +484,8 @@ function fit_cube(cube)
                 #@warn "Pixel ($x, $y) has > 50% NaN; moving on"
                 continue
             end
-            fitdict = fit_spectrum_from_subcube(cube, xrange=(x:x), yrange=(y:y))
+            fitdict = fit_spectrum_from_subcube(
+                cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component)
             if !isa(fitdict, Dict)
                 @debug "Fitdict $x, $y was not a dict!"
                 continue
@@ -496,7 +507,6 @@ end
 
 """    build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100, dom_init=nothing)
 Builds the `GModelFit.Model` object necessary for fitting the lines.
-
 The model assumes that each line is described as a single Gaussian profile, with a shared
 `redshift` and velocity width `fwhm`, while their individual fluxes are left as free parameters
 (including lines which actually have fixed line ratios, which might not have that in the ). 
@@ -514,12 +524,15 @@ Optional arguments:
 - `dom_init::GModelFit.Domain`: For finer control of which wavelength ranges can be included in
   the fit, pass a domain (will default to the full wl range in the cube otherwise).
   This is the maximum allowed domain to include, parts of it might still be excluded by the function.
+- `num_components::Int`: The number of kinematic components to include in the model.
+  So far, up to 2 is supported.
 # Returns
 - `model::GModelFit.Model`: The model containing the prescribed lines. The Reference line has
   norm=1., and the others are scaled according to the values of `foverha` given in the line list
   input file.
 """
-function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100, dom_init=nothing)
+function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100,
+    dom_init=nothing, broad_component=false)
     redss = (1. + cube.z_init)  # Just for convenience
     wave = cube.wave
     neblines = cube.linelist
@@ -532,7 +545,6 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
     for l in neblines.name[1:end]
         lamvac  = neblines[neblines.name.==l, :lamvac][1]
         lam_obs = lamvac * redss
-        # if (lam_obs > maximum(coords(dom_init)) - 10) | (lam_obs < minimum(coords(dom_init)) + 10)
         @debug "Build model: domain min max" (dom_init |> coords |> extrema)
         if !(minimum(coords(dom_init)) + 10 < lam_obs < maximum(coords(dom_init)) - 10)
             @debug "`build_model()` for $xrange,$yrange: Line $l was outside the wavelength domain"
@@ -574,6 +586,13 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
             fwhm_kms=fwhm_tot, norm=norm, lsf=fwhm_inst)
         components[Symbol(l)] = g # = ref_line
         append!(complist, [Symbol(l)])
+        if broad_component
+            g2 = GModelFit.FComp(
+                _gauss_line, [:waves], lab_wave=lamvac, redshift=cube.z_init,
+                fwhm_kms=fwhm_tot*1.5, norm=norm* 0.3, lsf=fwhm_inst)
+            components[Symbol(l * "_broad")] = g2 # = ref_line
+            append!(complist, [Symbol(l * "_broad")])
+        end
         @debug "Added the line $l to the model"
     end 
 
@@ -581,6 +600,7 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
     components[:main] = SumReducer(complist)
     mod = Model(dom_init, components)
 
+    # Now: We set initial values, locked variables and interdependencies.
     for comp in keys(mod)
         @debug "Setting up $comp"
         # INFO: If a component is patched to itself, it in essence gets fixed!!
@@ -589,15 +609,21 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
         if comp == :main
             @debug "Comp was `:main`, moving on"
             continue
-        elseif comp != Symbol(cube.ref_line)
+        # elseif comp != Symbol(cube.ref_line)
+        elseif ! (comp in [Symbol(cube.ref_line), Symbol(String(cube.ref_line) * "_broad")])
             @debug "Fixing parameters for $comp"
+            if endswith(String(comp), "_broad")
+                refline = Symbol(String(cube.ref_line) * "_broad")
+            else
+                refline = Symbol(String(cube.ref_line))
+            end 
             mod[comp].lab_wave.fixed = true
             mod[comp].redshift.low = cube.z_init - cube.z_init * 0.1
             mod[comp].redshift.high = cube.z_init + cube.z_init * 0.1
-            mod[comp].redshift.patch = Symbol(cube.ref_line)
-            mod[comp].fwhm_kms.patch = Symbol(cube.ref_line)
-            mod[comp].fwhm_kms.low = 1.
-            mod[comp].fwhm_kms.high = 2000.
+            mod[comp].redshift.patch = refline
+            mod[comp].fwhm_kms.patch = refline
+            # mod[comp].fwhm_kms.low = 1.
+            # mod[comp].fwhm_kms.high = 2000.
             mod[comp].norm.low = 0.
             mod[comp].lsf.fixed = true
         else
@@ -609,6 +635,10 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
             mod[comp].lab_wave.fixed = true
             mod[comp].norm.low = 0.
             mod[comp].lsf.fixed = true
+            if endswith(String(comp), "_broad")
+                mod[comp].fwhm_kms.patch = @λ (m, v) -> v + m[Symbol(cube.ref_line)].fwhm_kms
+                mod[comp].fwhm_kms.low = 0.
+            end 
         end 
     end 
     @debug "`build_model()` successfully done!"
@@ -829,8 +859,18 @@ function fill_in_fit_values!(
     dict[:fitstats][row, column] = fitstats
     dict[:redshift][row, column, 1] = fitresults[Symbol(dict[:refline])].redshift.val
     dict[:redshift][row, column, 2] = fitresults[Symbol(dict[:refline])].redshift.unc
+    dict[:redshift][row, column, 3] = fitresults[Symbol(dict[:refline])].redshift.val/fitresults[Symbol(dict[:refline])].redshift.unc
     dict[:fwhm][row, column, 1] = fitresults[Symbol(dict[:refline])].fwhm_kms.val
     dict[:fwhm][row, column, 2] = fitresults[Symbol(dict[:refline])].fwhm_kms.unc
+    dict[:fwhm][row, column, 3] = fitresults[Symbol(dict[:refline])].fwhm_kms.val/fitresults[Symbol(dict[:refline])].fwhm_kms.unc
+    if :redshift_broad in keys(dict)
+        dict[:redshift_broad][row, column, 1] = fitresults[Symbol(dict[:refline_broad])].redshift.val
+        dict[:redshift_broad][row, column, 2] = fitresults[Symbol(dict[:refline_broad])].redshift.unc
+        dict[:redshift_broad][row, column, 3] = fitresults[Symbol(dict[:refline_broad])].redshift.val/fitresults[Symbol(dict[:refline_broad])].redshift.unc
+        dict[:fwhm_broad][row, column, 1] = fitresults[Symbol(dict[:refline_broad])].fwhm_kms.val
+        dict[:fwhm_broad][row, column, 2] = fitresults[Symbol(dict[:refline_broad])].fwhm_kms.unc
+        dict[:fwhm_broad][row, column, 3] = fitresults[Symbol(dict[:refline_broad])].fwhm_kms.val/fitresults[Symbol(dict[:refline_broad])].fwhm_kms.unc
+    end 
     fwhmu = dict[:fwhm][row, column, 1] ± dict[:fwhm][row, column, 2]
     sigmau = fwhm_to_sigma(fwhmu)
     for l in keys(dict)

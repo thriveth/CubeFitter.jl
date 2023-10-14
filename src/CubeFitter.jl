@@ -87,10 +87,20 @@ mutable struct GenericSpectralCube <: AbstractSpectralCube
     errscube::Array
 end
 
-"""
-    NIRSpecCube(filepath, grating; <keyword arguments>)
+
+"""    NIRSpecCube(filepath, grating; <keyword arguments>)
 Load data from a JWST/NIRSpec IFU datacube into a Julia `struct`.
 # Arguments
+- `filepath::String`: Path to FITS file containing the data.
+- `grating::String`: The grating used to make the observations. Must be in all lower case.
+# Optional arguments
+- `linelist_path::String`: If another list of emission lines than the standard is to be used,
+  this is where to pass the path to it. 
+- `lsf_file_path::String`: Path to any non-default version of the LSF solution file. This must at
+  present time have the same format as the standard dispersion files included in this package.
+- `z_init::Float`: An initial guess of the cosmological redshift of the observed object. This should be
+  within ~5% of the true value, otherwise the code doesn't know what to do with the data. 
+- `ref_line`: The (strong) emission line to use for initial redshift and flux estimates. 
 """
 mutable struct NIRSpecCube <: AbstractSpectralCube
     """ A struct representing a NIRSpec IFU datacube"""
@@ -123,8 +133,42 @@ mutable struct NIRSpecCube <: AbstractSpectralCube
 end
 
 
+"""    MIRICube(filepath, grating; <keyword arguments>)
+Load data from a JWST/MIRI IFU datacube into a Julia `struct`.
+# Arguments
 """
-    MUSECube(filepath; linelist_path)
+mutable struct MIRICube <: AbstractSpectralCube
+    """ A struct representing a MIRI IFU datacube"""
+    grating::String
+    wave::Array
+    fluxcube::Array
+    errscube::Array
+    header::FITSHeader
+    primheader::FITSHeader
+    linelist::DataFrame
+    lsf_fitter
+    z_init
+    ref_line
+    function NIRSpecCube(filepath::String, grating::String;
+        linelist_path=joinpath(datapath, "neblines.dat"),
+        lsf_file_path=joinpath(datapath, "jwst_miri_$(grating)_disp.fits"),
+        z_init=0, reference_line=:OIII_5007)
+
+        linelist = load_neblines(linelist_path)
+        ddict = load_fits_cube(filepath)
+        ddict = convert_ergscms_Å_units(ddict, "NIRSpec")
+        wave = ustrip.(ddict[:Wave])
+        fluxcube = ustrip.(ddict[:Data])
+        errscube = ustrip.(ddict[:Errs])
+        header = ddict[:Header]
+        primheader = ddict[:Primheader]
+        itp = get_resolving_power("NIRSpec", setting=grating)
+        new(grating, wave, fluxcube, errscube, header, primheader, linelist, itp, z_init, reference_line)
+    end
+end
+
+
+"""    MUSECube(filepath; linelist_path)
 """
 mutable struct MUSECube <: AbstractSpectralCube
     setting::String
@@ -149,6 +193,9 @@ mutable struct MUSECube <: AbstractSpectralCube
         itp = get_resolving_power("NIRSpec", setting=lsf_polynomium_degree)
     end
 end
+
+### === End of various instrument data structs. This should probably be extracted out into a module
+### of its own some time. 
 
 
 function estimate_redshift_reference_line_flux(spec_cube; xrange=nothing, yrange=nothing)
@@ -228,7 +275,11 @@ function get_resolving_power_nirspec(grating::String; calib_path=datapath)  #"./
 end
 
 
-function convert_ergscms_Å_units(datadict::Dict, instrument="NIRSPec")
+"""    convert_ergscms_Å_units(datadict::Dict; instrument="NIRSpec")
+Makes a best possible attempt at finding out what the data units are of the cube,
+and to convert those data units into Ångström and ergs/s/cm²/Å.
+"""
+function convert_ergscms_Å_units(datadict::Dict; instrument="NIRSPec")
     data, errs, wave, header = (
         datadict[:Data], datadict[:Errs], datadict[:Wave], datadict[:Header])
     wave = Array{Float64}(wave)

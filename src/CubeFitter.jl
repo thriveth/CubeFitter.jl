@@ -100,7 +100,8 @@ Load data from a JWST/NIRSpec IFU datacube into a Julia `struct`.
   present time have the same format as the standard dispersion files included in this package.
 - `z_init::Float`: An initial guess of the cosmological redshift of the observed object. This should be
   within ~5% of the true value, otherwise the code doesn't know what to do with the data. 
-- `ref_line`: The (strong) emission line to use for initial redshift and flux estimates. 
+- `ref_line`: The (strong) emission line to use for initial redshift and flux estimates. This parameter
+  is really important and honestly I am not sure why I put it in the optional arguments... 
 """
 mutable struct NIRSpecCube <: AbstractSpectralCube
     """ A struct representing a NIRSpec IFU datacube"""
@@ -149,7 +150,8 @@ mutable struct MIRICube <: AbstractSpectralCube
     lsf_fitter
     z_init
     ref_line
-    function NIRSpecCube(filepath::String, grating::String;
+
+    function NIRSpecCube(filepath, grating;
         linelist_path=joinpath(datapath, "neblines.dat"),
         lsf_file_path=joinpath(datapath, "jwst_miri_$(grating)_disp.fits"),
         z_init=0, reference_line=:OIII_5007)
@@ -279,7 +281,7 @@ end
 Makes a best possible attempt at finding out what the data units are of the cube,
 and to convert those data units into Ångström and ergs/s/cm²/Å.
 """
-function convert_ergscms_Å_units(datadict::Dict; instrument="NIRSPec")
+function convert_ergscms_Å_units(datadict::Dict; instrument="NIRSpec")
     data, errs, wave, header = (
         datadict[:Data], datadict[:Errs], datadict[:Wave], datadict[:Header])
     wave = Array{Float64}(wave)

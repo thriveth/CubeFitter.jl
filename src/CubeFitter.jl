@@ -11,7 +11,7 @@ using Measurements: result
 
 # Basic computing functionality, misc.
 using Base: available_text_colors_docstring, NullLogger
-using Base.Threads, Logging, LoggingExtras
+using Base.Threads, Printf, Logging, LoggingExtras
 # Handle NaN's more gracefully than standard Julia
 using NaNStatistics
 # Physical units and unit conversion, and uncertainties
@@ -122,7 +122,7 @@ mutable struct NIRSpecCube <: AbstractSpectralCube
 
         linelist = load_neblines(linelist_path)
         ddict = load_fits_cube(filepath)
-        ddict = convert_ergscms_Å_units(ddict, "NIRSpec")
+        ddict = convert_ergscms_Å_units(ddict; instrument="NIRSpec")
         wave = ustrip.(ddict[:Wave])
         fluxcube = ustrip.(ddict[:Data])
         errscube = ustrip.(ddict[:Errs])

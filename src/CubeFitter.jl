@@ -11,7 +11,7 @@ using Measurements: result
 
 # Basic computing functionality, misc.
 using Base: available_text_colors_docstring, NullLogger
-using Base.Threads, Printf, Logging, LoggingExtras
+using Base.Threads, Logging, LoggingExtras
 # Handle NaN's more gracefully than standard Julia
 using NaNStatistics
 # Physical units and unit conversion, and uncertainties
@@ -151,7 +151,7 @@ mutable struct MIRICube <: AbstractSpectralCube
     z_init
     ref_line
 
-    function NIRSpecCube(filepath, grating;
+    function NIRSpecCube(filepath::String, grating::String;
         linelist_path=joinpath(datapath, "neblines.dat"),
         lsf_file_path=joinpath(datapath, "jwst_miri_$(grating)_disp.fits"),
         z_init=0, reference_line=:OIII_5007)

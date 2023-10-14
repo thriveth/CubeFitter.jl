@@ -156,7 +156,7 @@ mutable struct MIRICube <: AbstractSpectralCube
 
         linelist = load_neblines(linelist_path)
         ddict = load_fits_cube(filepath)
-        ddict = convert_ergscms_Å_units(ddict, "NIRSpec")
+        ddict = convert_ergscms_Å_units(ddict, instrument="NIRSpec")
         wave = ustrip.(ddict[:Wave])
         fluxcube = ustrip.(ddict[:Data])
         errscube = ustrip.(ddict[:Errs])

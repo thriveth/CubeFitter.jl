@@ -4,7 +4,7 @@ module CubeFitter
 export AbstractSpectralCube, NIRSpecCube, MUSECube
 export calculate_moments, fit_cube, fit_spectrum_from_subcube
 export make_spectrum_from_cutout, make_lines_mask, toggle_fnu_flam
-export write_to_fits
+export write_to_fits, quickload_neblines
 ###============================================================###
 
 using Measurements: result
@@ -28,15 +28,26 @@ import NumericalIntegration as nui
 using Term.Progress
 include("./SpecHelpers.jl")
 using .SpecHelpers
+export load_neblines, load_fits_cube
+
 
 # Physical constants
 const ckms = SpeedOfLightInVacuum |> u"km/s"
 const caps = SpeedOfLightInVacuum |> u"Å/s"
 
 datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
+#= include("./helpers.jl") =#
+include("./ContSubt.jl")
 # include("./SpectralCubes.jl")
 # using .SpectralCubes
 
+"""    quickload_neblines()
+Load the default spectral line table.
+"""
+function quickload_neblines()
+    df = load_neblines(joinpath(datapath, "neblines.dat"))
+    return df
+end
 
 """    set_logging_level(level)
 Set how much feedback you want to see.
@@ -115,11 +126,10 @@ mutable struct NIRSpecCube <: AbstractSpectralCube
     lsf_fitter
     z_init
     ref_line
-    function NIRSpecCube(filepath::String, grating::String;
-        linelist_path=joinpath(datapath, "neblines.dat"),
-        lsf_file_path=joinpath(datapath, "jwst_nirspec_$(grating)_disp.fits"),
-        z_init=0, reference_line=:OIII_5007)
-
+    function NIRSpecCube(filepath::String, grating::String; 
+            linelist_path=joinpath(datapath, "neblines.dat"), 
+            lsf_file_path=joinpath(datapath, "jwst_nirspec_$(grating)_disp.fits"), 
+            z_init=0, reference_line=:OIII_5007) 
         linelist = load_neblines(linelist_path)
         ddict = load_fits_cube(filepath)
         ddict = convert_ergscms_Å_units(ddict; instrument="NIRSpec")
@@ -199,7 +209,6 @@ end
 ### === End of various instrument data structs. This should probably be extracted out into a module
 ### of its own some time. 
 
-
 function estimate_redshift_reference_line_flux(spec_cube; xrange=nothing, yrange=nothing)
     wave = spec_cube.wave
     spec_guess, _ = make_spectrum_from_cutout(spec_cube, xrange, yrange)
@@ -214,34 +223,33 @@ function estimate_redshift_reference_line_flux(spec_cube; xrange=nothing, yrange
 end 
 
 
-
-"""    load_fits_cube(inpath)
-Convenience function to load a FITS cube and return a Dict of various, sometimes useful,
-quantities read or derived from the cube.
-## Returns
-- Dict containing wave array, data and error cube, and headers from the primary HDU and
-  first extension from the data file.
-"""
-function load_fits_cube(inpath::String)::Dict{Symbol, Any}
-    fitsfile = FITS(inpath, "r")
-    header = read_header(fitsfile[2])
-    primary = read_header(fitsfile[1])
-    data = read(fitsfile[2])
-    errs = read(fitsfile[3])
-    naxis3 = header["NAXIS3"]
-    crval3 = header["CRVAL3"]
-    if haskey(header, "CDELT3")
-        cdelt3 = header["CDELT3"]
-    elseif haskey(header, "CD3_3")
-        cdelt3 = header["CD3_3"]
-    else
-        println("Could not find spectral axis keywords in FITS header")
-    end
-    waves = crval3 .+ cdelt3 .* (0:naxis3-1)
-    out = Dict(:Wave => waves, :Data => data, :Errs => errs,
-               :Header => header, :Primheader => primary)
-    return out
-end
+#= """    load_fits_cube(inpath) =#
+#= Convenience function to load a FITS cube and return a Dict of various, sometimes useful, =#
+#= quantities read or derived from the cube. =#
+#= ## Returns =#
+#= - Dict containing wave array, data and error cube, and headers from the primary HDU and =#
+#=   first extension from the data file. =#
+#= """ =#
+#= function load_fits_cube(inpath::String)::Dict{Symbol, Any} =#
+#=     fitsfile = FITS(inpath, "r") =#
+#=     header = read_header(fitsfile[2]) =#
+#=     primary = read_header(fitsfile[1]) =#
+#=     data = read(fitsfile[2]) =#
+#=     errs = read(fitsfile[3]) =#
+#=     naxis3 = header["NAXIS3"] =#
+#=     crval3 = header["CRVAL3"] =#
+#=     if haskey(header, "CDELT3") =#
+#=         cdelt3 = header["CDELT3"] =#
+#=     elseif haskey(header, "CD3_3") =#
+#=         cdelt3 = header["CD3_3"] =#
+#=     else =#
+#=         println("Could not find spectral axis keywords in FITS header") =#
+#=     end =#
+#=     waves = crval3 .+ cdelt3 .* (0:naxis3-1) =#
+#=     out = Dict(:Wave => waves, :Data => data, :Errs => errs, =#
+#=                :Header => header, :Primheader => primary) =#
+#=     return out =#
+#= end =#
 
 
 """    get_resolving_power(instrument[, setting=nothing])
@@ -322,7 +330,6 @@ function convert_ergscms_Å_units(datadict::Dict; instrument="NIRSpec")
 end
 
 
-
 """    toggle_fnu_flam()
 Converts fnu data to flam units, and vice versa.
 Input must be Unitful™ (i.e., Quantities).
@@ -383,7 +390,6 @@ function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)
     # @debug "`make_spectrum_from_cutout()`: Number of spatial pix in cutout" size(slice)
     return spec_init, errs_init
 end
-
 
 
 """
@@ -689,6 +695,7 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
             mod[comp].norm.low = 0.
             mod[comp].lsf.fixed = true
             if endswith(String(comp), "_broad")
+                mod[comp].redshift.val = cube.z_init - cube.z_init * 0.001
                 mod[comp].fwhm_kms.patch = @λ (m, v) -> v + m[Symbol(cube.ref_line)].fwhm_kms
                 mod[comp].fwhm_kms.low = 0.
             end 
@@ -697,7 +704,6 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
     @debug "`build_model()` successfully done!"
     return mod
 end 
-
 
 
 """    _gauss_line(waves, lab_wave, redshift, fwhm_kms, norm, lsf)
@@ -725,7 +731,6 @@ end
 #=     flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm =#
 #=     return flux =#
 #= end =#
-
 
  
 """
@@ -835,7 +840,6 @@ function nanmask10(
 end 
 
 
-
 """    gauss(λ::Array, σ::Float64, μ::Float64)
 Return a simple normalized Gaussian with an integral of 1.
 """
@@ -867,7 +871,6 @@ function estimate_line_snr(wave, flux; err=nothing)
 end 
 
 
-
 """     get_resolving_power_muse(; order=3)
 ## Optional arguments
 - `order::Int`: The order of the polynomial to fit to the datapoints. Default is 3.
@@ -888,17 +891,17 @@ function get_resolving_power_muse(;order=3::Int)
 end
 
 
-"""    load_neblines(infile)
-# Arguments
-- `filepath::String`: The file to use. Must be a whitespace separated file,
-  containing at least the columns 'name', 'lamvac', 'lamair', and 'foverha'.
-"""
-function load_neblines(infile="./static_data/neblines.dat")
-    lines = CSV.File(infile, delim=" ", ignorerepeated=true, comment="#") |> DataFrame
-    select!(lines, [:name, :lamvac, :lamair, :foverha])
-    #@info "Loaded list of nebular lines"
-    return lines
-end 
+#= """    load_neblines(infile) =#
+#= # Arguments =#
+#= - `filepath::String`: The file to use. Must be a whitespace separated file, =#
+#=   containing at least the columns 'name', 'lamvac', 'lamair', and 'foverha'. =#
+#= """ =#
+#= function load_neblines(infile="./static_data/neblines.dat") =#
+#=     lines = CSV.File(infile, delim=" ", ignorerepeated=true, comment="#") |> DataFrame =#
+#=     select!(lines, [:name, :lamvac, :lamair, :foverha]) =#
+#=     #@info "Loaded list of nebular lines" =#
+#=     return lines =#
+#= end  =#
 
 
 """    fill_in_fit_values(dict::Dict, fitresults::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)

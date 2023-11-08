@@ -1,15 +1,65 @@
 module SpecHelpers
 
 export fwhm_to_sigma, sigma_to_fwhm, wl_to_v, v_to_wl, deltawl_to_v, v_to_deltawl
-export vactoair, airtovac
+export vactoair, airtovac, load_neblines, load_fits_cube
 
-using Unitful, PhysicalConstants.CODATA2018
+using Unitful, PhysicalConstants.CODATA2018, CSV, DataFrames, FITSIO
 
 const ckms = SpeedOfLightInVacuum |> u"km/s"
 const caps = SpeedOfLightInVacuum |> u"Å/s"
 
+#= staticdatapath = joinpath(dirname(pathof(SpecHelpers)), "..", "static_data") =#
+
+
+###=========================================================
+#           Convenience functions used here and there.
+"""    
+    load_neblines(infile)
+Loads a table of spectral lines, good for e.g. masking.
+# Arguments
+- `filepath::String`: The file to use. Must be a whitespace separated file,
+  containing at least the columns 'name', 'lamvac', 'lamair', and 'foverha'.
+"""
+function load_neblines(infile)
+    lines = CSV.File(infile, delim=" ", ignorerepeated=true, comment="#") |> DataFrame
+    select!(lines, [:name, :lamvac, :lamair, :foverha])
+    #@info "Loaded list of nebular lines"
+    return lines
+end 
+
+
+"""    load_fits_cube(inpath::String)
+Convenience function to load a FITS cube and return a Dict of various, sometimes useful,
+quantities read or derived from the cube.
+## Returns
+- Dict containing wave array, data and error cube, and headers from the primary HDU and
+  first extension from the data file.
+"""
+function load_fits_cube(inpath::String)::Dict{Symbol, Any}
+    fitsfile = FITS(inpath, "r")
+    header = read_header(fitsfile[2])
+    primary = read_header(fitsfile[1])
+    data = read(fitsfile[2])
+    errs = read(fitsfile[3])
+    naxis3 = header["NAXIS3"]
+    crval3 = header["CRVAL3"]
+    if haskey(header, "CDELT3")
+        cdelt3 = header["CDELT3"]
+    elseif haskey(header, "CD3_3")
+        cdelt3 = header["CD3_3"]
+    else
+        println("Could not find spectral axis keywords in FITS header")
+    end
+    waves = crval3 .+ cdelt3 .* (0:naxis3-1)
+    out = Dict(:Wave => waves, :Data => data, :Errs => errs,
+               :Header => header, :Primheader => primary)
+    return out
+end
+
+
+
 ###==========================================
-#           Functions
+#           Often-used computations
 
 function fwhm_to_sigma(fwhm)
     σ = fwhm / (2. * sqrt(2. * log(2.)))

@@ -8,8 +8,9 @@ using NaNStatistics
 # For sigma clipping:
 using Photometry
 using Interpolations
+using PyPlot
 
-#= include("./SpecHelpers.jl") =#
+# include("./SpecHelpers.jl")
 ### This part is only relevant for my Sunburst NIRSpec project
 # Set up the paths and filenames necessary to do the thing.
 in_path = "../Products/NIRSpec/science-ready/"
@@ -76,7 +77,7 @@ function load_fits_cube_contsub(inpath::String)::Dict
 end
 
 
-"""
+"""    cont_subt(incube::AbstractSpectralCube; ..)
 Leaner version of the cont_subt function. This functions does nothing else than
 continuum subtract the data cube and return the result. 
 ## Input
@@ -85,43 +86,55 @@ continuum subtract the data cube and return the result.
 """
 function cont_subt(incube; 
         #= TODO: Finish rewriting this thingie =#
-        clip_sigmas=3., window_pix=51, 
-        neblines=joinpath(datapath, "neblines.dat"),
-        #= neblines="./static_data/neblines.dat", =#
+        window_pix=51, 
+        sigma_clip=true, clip_sigmas=3.,
         velwidth=1000,  # km/s
-        redshift=0,
         mask_lines=false,
         min_strength=0.01,  # Fraction of Hα
-    )::Array{Float64, 3}
-    inarray = incube[:Data]
-    nlines = load_neblines(neblines)
+    )
+    outcube = deepcopy(incube)
+    inarray = outcube.fluxcube
+    wave = outcube.wave
+    redshift = outcube.z_init
+    nlines = outcube.linelist
     contsub_cube = zeros(eltype(inarray), size(inarray))
+    mask = trues(size(inarray)[3])
     if mask_lines
-        mask = falses(size(inarray)[3])
         for r in eachrow(nlines)
             if r[:foverha] < min_strength
                 continue
             end
-            cenwave = mod[comp].lab_wave.val * (1 + mod[comp].redshift.val)
-            window_width_ang = v_to_deltawl(window_width_kms, cenwave)
+            #= cenwave =  mod[comp].lab_wave.val * (1 + mod[comp].redshift.val) =#
+            cenwave = r[:lamvac] * (1 + redshift)
+            window_width_ang = v_to_deltawl(velwidth, cenwave)
             @debug "Make line mask: " wave window_width_ang
-            mask[cenwave-window_width_ang .< wave .< cenwave+window_width_ang] .= 1
+            mask[cenwave-window_width_ang .< wave .< cenwave+window_width_ang] .= 0
+            # So we can interpolate properly:
+            mask[1] = mask[end] = 1
         end 
     end
-    # println(size(contsub_cube))
     naxis1, naxis2 = size(inarray)
     # Iterate over the spatial dimensions and populate the spectral datacube
     @threads for i in 1:naxis1
         for j in 1:naxis2
             @printf("Now continuum subtracting row %03d, col. %03d. \r", i, j)
             flush(stdout)
-            spec = inarray[i, j, :] 
-            scspec = copy(spec)
-            scspec[abs.(spec) .> nanmedian(spec) + clip_sigmas .* nanstd(spec)] .= NaN
-            contsub_cube[i, j, :] = spec - running_median(scspec, 51, nan=:ignore)
+            spec = inarray[i, j, :][mask]
+            #= Sigma clip the (possibly line-masked) spectrum =#
+            scwave = wave[mask]
+            scspec = deepcopy(spec)
+            scmask = trues(size(scwave))
+            scmask[abs.(scspec) .> nanmedian(scspec) + clip_sigmas .* nanstd(scspec)] .= 0
+            scmask[1] = scmask[end] = 1  # Must be included to allow interpolation
+            finalspec, finalwave = scspec[scmask], scwave[scmask]
+            #= scspec[abs.(spec) .> nanmedian(spec) + clip_sigmas .* nanstd(spec)] .= NaN =#
+            continuum = running_median(finalspec, window_pix, nan=:ignore)
+            ipl = LinearInterpolation(finalwave, continuum)
+            contsub_cube[i, j, :] = inarray[i, j, :] - ipl(wave)
         end
     end 
-    return contsub_cube
+    outcube.fluxcube = contsub_cube
+    return outcube
 end
 
 

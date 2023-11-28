@@ -4,11 +4,10 @@ module CubeFitter
 export AbstractSpectralCube, NIRSpecCube, MUSECube
 export calculate_moments, fit_cube, fit_spectrum_from_subcube
 export make_spectrum_from_cutout, make_lines_mask, toggle_fnu_flam
-export write_to_fits, quickload_neblines
+export write_maps_to_fits, write_spectral_cube_to_fits, quickload_neblines
 ###============================================================###
 
 using Measurements: result
-
 # Basic computing functionality, misc.
 using Base: available_text_colors_docstring, NullLogger
 using Base.Threads, Printf, Logging, LoggingExtras
@@ -38,6 +37,7 @@ const caps = SpeedOfLightInVacuum |> u"Å/s"
 datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
 #= include("./helpers.jl") =#
 include("./ContSubt.jl")
+export cont_subt
 # include("./SpectralCubes.jl")
 # using .SpectralCubes
 
@@ -48,6 +48,7 @@ function quickload_neblines()
     df = load_neblines(joinpath(datapath, "neblines.dat"))
     return df
 end
+
 
 """    set_logging_level(level)
 Set how much feedback you want to see.
@@ -85,6 +86,7 @@ global_logger(NullLogger())
 # inheriting from it for various ls instruments, which require different treatments and
 # different kind of, and still be able to write functions which can operate on all of them. 
 abstract type AbstractSpectralCube end
+
 
 """
 Thus far, this is not actually implemented.
@@ -126,12 +128,14 @@ mutable struct NIRSpecCube <: AbstractSpectralCube
     lsf_fitter
     z_init
     ref_line
+    flux_convert
     function NIRSpecCube(filepath::String, grating::String; 
             linelist_path=joinpath(datapath, "neblines.dat"), 
             lsf_file_path=joinpath(datapath, "jwst_nirspec_$(grating)_disp.fits"), 
-            z_init=0, reference_line=:OIII_5007) 
+            z_init=0.0, reference_line=:OIII_5007) 
         linelist = load_neblines(linelist_path)
         ddict = load_fits_cube(filepath)
+        origflux = deepcopy(ddict[:Data])
         ddict = convert_ergscms_Å_units(ddict; instrument="NIRSpec")
         wave = ustrip.(ddict[:Wave])
         fluxcube = ustrip.(ddict[:Data])
@@ -139,8 +143,20 @@ mutable struct NIRSpecCube <: AbstractSpectralCube
         header = ddict[:Header]
         primheader = ddict[:Primheader]
         itp = get_resolving_power("NIRSpec", setting=grating)
-        new(grating, wave, fluxcube, errscube, header, primheader, linelist, itp, z_init, reference_line)
+        fluxconverter = nanmean(origflux ./ fluxcube, dims=(1,2))
+        new(grating, wave, fluxcube, errscube, header, primheader, linelist, itp, z_init, reference_line, fluxconverter)
     end
+end
+
+
+"""    TODO: Do I keep this or throw it away again?
+"""
+function set_cube_units(incube::AbstractSpectralCube; to_data_units="ergscms", to_spectral_units="aa")
+    dustrings = ["ergscms", "native", ]
+    wustrints = ["AA", "Hz", "micron", "μm"]
+    specunit = uparse(to_spectral_units)
+    dataunit = uparse(to_spectral_units)
+    return nothing
 end
 
 
@@ -160,7 +176,6 @@ mutable struct MIRICube <: AbstractSpectralCube
     lsf_fitter
     z_init
     ref_line
-
     function NIRSpecCube(filepath::String, grating::String;
         linelist_path=joinpath(datapath, "neblines.dat"),
         lsf_file_path=joinpath(datapath, "jwst_miri_$(grating)_disp.fits"),
@@ -942,10 +957,27 @@ function fill_in_fit_values!(
 end
 
 
-
-"""    write_to_fits(filepath, mapsdict)
+"""    write_spectral_cube_to_fits(filepath, spectralcube)
+Write a subtype of AbstractSpectralCube to a FITS file.
 """
-function write_to_fits(filepath::String, mapsdict::Dict)
+function write_spectral_cube_to_fits(filepath::String, spectralcube::NIRSpecCube)
+    # TODO: Make possible to choose units. 
+    # TODO: Make sure units-related FITS keywords are correct.
+    f = FITS(filepath, "w")
+    primhead = spectralcube.primheader; primhead["CONTINUE"] = ""
+    header = spectralcube.header; header["CONTINUE"] = ""
+    write(f, Float64[], header=primhead)
+    write(f, spectralcube.fluxcube .* spectralcube.flux_convert, header=header, name="SCI")
+    write(f, spectralcube.errscube .* spectralcube.flux_convert, header=header, name="ERR")
+    close(f)
+end
+
+
+"""    write_maps_to_fits(filepath, mapsdict)
+Write a dictionary of line maps as output by the cube fitter function to a multi-
+extension FITS file.
+"""
+function write_maps_to_fits(filepath::String, mapsdict::Dict)
     f = FITS(filepath, "w")
     keylist = sort(collect(keys(mapsdict)))
     primhead = mapsdict[:header]; primhead["CONTINUE"] = ""  #push!(primhead, "CONTINUE"="")
@@ -963,5 +995,17 @@ function write_to_fits(filepath::String, mapsdict::Dict)
     return nothing
 end 
 
-
+"""    quicklook_slice(slicedict, name; what="data", norm="sqrt", colorlimits=nothing)
+"""
+function quicklook_slice(slicedict, name; what="data", norm="log", colorlimits=nothing, cmap="cubehelix")
+    theslice = slicedict[Symbol(name)]
+    layers = Dict(:data => 1, :errs => 2, :qual => 3)
+    thelayer = layers[Symbol(what)]
+    data = transpose(theslice[:,:,thelayer])
+    fig, ax = subplots(1, 1)
+    if colorlimits==nothing
+        colorlimits = (nanpctile(data, 5), nanpctile(data, 95))
+    end
+    ax.imshow(data, norm=norm, vmin=colorlimits[1], vmax=colorlimits[2], cmap=cmap, origin="lower")
+end 
 end  # End module

@@ -99,6 +99,7 @@ There really isn't much to look at but here it is:
 
 In order of approximate priority: 
 
+- [x] Include continuum subtraction functionality in the package.
 - [ ] Test and ensure the `MUSECube` struct actually works as advertised
 - [ ] Allow for measuring flux or upper limits in lines that are currently excluded as
       having too low S/N ratio.

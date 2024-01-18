@@ -831,9 +831,9 @@ function make_lines_mask(mod::Model; window_width_kms::Float64=1000., plot_it::B
         end
         Plots.plot!(coords(mod.domain), mod()./thefactor, title="Model and mask", label="Model")
         # Plots.plot!(coords(mod.domain), mask .* 0.5 ./ thefactor, label="Mask")
+        Plots.xlabel!("Wavelength")
+        Plots.gui()
     end 
-    Plots.xlabel!("Wavelength")
-    Plots.gui()
     return mask
 end 
 

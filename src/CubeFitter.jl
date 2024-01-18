@@ -35,8 +35,7 @@ include("./ContSubt.jl")
 export cont_subt
 
 
-"""
-    quickload_neblines()
+"""    quickload_neblines()
 Load the default spectral line table.
 """
 function quickload_neblines()
@@ -83,7 +82,7 @@ global_logger(NullLogger())
 abstract type AbstractSpectralCube end
 
 
-"""
+"""    GenericSpectralCube
 Thus far, this is not actually implemented.
 It is planned to be a barebones solution for cubes that are not from any of the
 explicitly supported.
@@ -338,7 +337,6 @@ function convert_ergscms_Å_units(datadict::Dict; instrument="NIRSpec")
     return datadict  #, data, errs, wave, header
 end
 
-
 """    toggle_fnu_flam()
 Converts fnu data to flam units, and vice versa.
 Input must be Unitful™ (i.e., Quantities).
@@ -401,22 +399,16 @@ function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)
 end
 
 
-"""
-    fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
-
+"""    fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
 Extract a subcube as a spectrum, and pass it to the 1D spectrum fitter. 
-
 This is the main workhorse of the user-facing functions in this package. Given any two
 pixel ranges, it extrancts the spectrum and error vector from the cube in these ranges. If
 not passed any range in a direction, it uses the entire available pixel range in that
 direction.
-
 To only use one row, column or spaxel, just pass in its pixel value as both start and end
 of the range.
-
 For a convenient wrapper around this function which fits an entire cube spaxel-by-spaxel,
 see `fit_cube`.
-
 # Arguments
 Required arguments:
 - `cube::AbstractSpectralCube`: The spectral cube object to fit. Must be one of the
@@ -482,7 +474,6 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
 end
 
 
-
 function makeresultdict(cube; broad_component=false)
     @debug "Making output dict"
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
@@ -526,8 +517,7 @@ function makeresultdict(cube; broad_component=false)
 end
 
 
-"""
-    fit_cube(cube)
+"""    fit_cube(cube)
 Fit the entire cube spaxel-by-spaxel.
 
 This is a convenience function to perform that one action we want to perform 90% of the time.
@@ -600,7 +590,7 @@ Optional arguments:
   input file.
 """
 function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100,
-    dom_init=nothing, broad_component=false)
+    dom_init=nothing, broad_component=false, uplims=false, fixkinematics=false)
     redss = (1. + cube.z_init)  # Just for convenience
     wave = cube.wave
     neblines = cube.linelist
@@ -623,7 +613,7 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
         if length(wave[idx]) < 10; continue; end
         snr = estimate_line_snr(wave[idx], spec_init[idx], err=errs_init[idx])
         line_too_faint = (snr < min_snr) | isnan(snr)
-        if line_too_faint
+        if line_too_faint && not(uplims)
             if l != cube.ref_line
                 @debug   "$l was too faint with SNR = $snr"
                 continue
@@ -730,32 +720,19 @@ function _gauss_line(
     flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm
     return flux
 end
-#= function _gauss_line( =#
-#=     waves::Array, lab_wave::Float64, redshift::Float64, fwhm_kms::Float64, norm::Float64, lsf::Float64)  #, grating="g140h") =#
-#=     cen_wave = lab_wave * (1. + redshift) =#
-#=     fwhm_inst = ustrip(ckms) / lsf  # get_resolving_power( =#
-#=         # cen_wave, instrument=instrument, order=order, grism=grating) =#
-#=     fwhm_tot = sqrt(fwhm_inst^2 + fwhm_kms^2) =#
-#=     sigma_aa = fwhm_tot / ckms * cen_wave / (2*sqrt(2*log10(2))) =#
-#=     flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm =#
-#=     return flux =#
-#= end =#
-
  
-"""
-    calculate_moments(cube; refline=nothing, window_kms=1000)
+"""    calculate_moments(cube; refline=nothing, window_kms=1000)
 Computes moments of a flux slab with associated wavelengths.
-
 Computes the 0th, 1st and 2nd moments of a spectral chunk (a line map) in one or more
 pixels. Errors/uncertainties are not included in this computation.
-# Arguments
+## Arguments
 Required arguments:
 - `cube::AbstractSpectralCube`: Datacube struct to be computed.
 Optional arguments:
 - `refline::Symbol`: The line to integrate, if not the default one set in the `cube`.
 - `window_kms::Float64`: Width of the spectroscopic range included in the calculation,
   given in km/s.
-# Returns
+## Returns
 - A tuple of three 2D arrays (images) of the moments mapped to each spatial pixel.
 """
 function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
@@ -797,8 +774,6 @@ function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
     return mom0, mom1, mom2
 end 
 
-
-
 """    make_lines_mask(mod; window_width_kms=1000, plot_it=false)
 Creates a mask which keeps data in a window around each line in the model, and discards
 the rest. The window width is customizable.
@@ -837,8 +812,6 @@ function make_lines_mask(mod::Model; window_width_kms::Float64=1000., plot_it::B
     return mask
 end 
 
-
-
 """    nanmask10(flux, dflux)
 Removes wave/velocity bins in which wither spec or errs are NaN, or where either is == 0.
 The `flux` and `dflux` (error) arrays must have the same size.
@@ -855,7 +828,6 @@ function nanmask10(
     return idx  #flux[idx], dflux[idx]
 end 
 
-
 """    gauss(λ::Array, σ::Float64, μ::Float64)
 Return a simple normalized Gaussian with an integral of 1.
 """
@@ -864,10 +836,7 @@ function gauss(λ::Array,  σ::Float64, μ::Float64)
     return g
 end 
 
-
-
-"""
-    estimate_line_snr(wave, flux; err=nothing)
+"""    estimate_line_snr(wave, flux; err=nothing)
 Quick and coarse estimate of the integrated flux within a wavelength window
 without actual fitting.
 """
@@ -885,7 +854,6 @@ function estimate_line_snr(wave, flux; err=nothing)
     if isnan(snr); snr = 0.1; end
     return snr
 end 
-
 
 """     get_resolving_power_muse(; order=3)
 ## Optional arguments
@@ -957,7 +925,6 @@ function fill_in_fit_values!(
     end
 end
 
-
 """    write_spectral_cube_to_fits(filepath, spectralcube)
 Write a subtype of AbstractSpectralCube to a FITS file.
 """
@@ -972,7 +939,6 @@ function write_spectral_cube_to_fits(filepath::String, spectralcube::NIRSpecCube
     write(f, spectralcube.errscube .* spectralcube.flux_convert, header=header, name="ERR")
     close(f)
 end
-
 
 """    write_maps_to_fits(filepath, mapsdict)
 Write a dictionary of line maps as output by the cube fitter function to a multi-

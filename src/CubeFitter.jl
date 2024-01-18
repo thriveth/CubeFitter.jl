@@ -998,15 +998,16 @@ end
 
 """    quicklook_slice(slicedict, name; what="data", norm="sqrt", colorlimits=nothing)
 """
-function quicklook_slice(slicedict, name; what="data", norm="log", colorlimits=nothing, cmap="cubehelix")
+function quicklook_slice(slicedict, name; what="data", norm=identity, colorlimits=nothing, cmap="cubehelix")
     theslice = slicedict[Symbol(name)]
     layers = Dict(:data => 1, :errs => 2, :qual => 3)
     thelayer = layers[Symbol(what)]
     data = transpose(theslice[:,:,thelayer])
-    fig, ax = subplots(1, 1)
     if colorlimits==nothing
-        colorlimits = (nanpctile(data, 5), nanpctile(data, 95))
+        colorlimits = (nanpctile(data, 2), nanpctile(data, 99))
     end
-    ax.imshow(data, norm=norm, vmin=colorlimits[1], vmax=colorlimits[2], cmap=cmap, origin="lower")
+    data = clamp.(data, colorlimits[1], colorlimits[2])
+    Plots.heatmap(data .|> norm, aspect_ratio=:equal, color=:magma)
 end 
+
 end  # End module

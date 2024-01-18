@@ -100,10 +100,10 @@ There really isn't much to look at but here it is:
 In order of approximate priority: 
 
 - [x] Include continuum subtraction functionality in the package.
+- [x] Make it possible to add a second and perhaps third kinematic component. 
 - [ ] Test and ensure the `MUSECube` and `MIRICube` structs actually works as advertised
 - [ ] Allow for measuring flux or upper limits in lines that are currently excluded as
       having too low S/N ratio.
-- [ ] Make it possible to add a second and perhaps third kinematic component. 
 - [ ] Add support for more instruments. Suggestions welcome (especially if accompanied
       with a suitable test dataset).
 - [ ] Write quicklook-functions allowing to quickly view the fit outputs with minimum

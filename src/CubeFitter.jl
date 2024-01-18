@@ -22,12 +22,7 @@ import Interpolations: LinearInterpolation
 # Numerical integration
 using NumericalIntegration
 import NumericalIntegration as nui
-#= import PyPlot as plt =#
-# using Plots
 import Plots
-# import Plots: plot, plot!
-Plots.gr()
-# Plots.gui()
 using Term.Progress
 include("./SpecHelpers.jl")
 using .SpecHelpers

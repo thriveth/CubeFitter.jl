@@ -1,15 +1,13 @@
 module CubeFitter
 ###============###
-
 export AbstractSpectralCube, NIRSpecCube, MUSECube
 export calculate_moments, fit_cube, fit_spectrum_from_subcube
 export make_spectrum_from_cutout, make_lines_mask, toggle_fnu_flam
 export write_maps_to_fits, write_spectral_cube_to_fits, quickload_neblines
 ###============================================================###
-
 using Measurements: result
 # Basic computing functionality, misc.
-using Base: available_text_colors_docstring, NullLogger
+using Base: NullLogger
 using Base.Threads, Printf, Logging, LoggingExtras
 # Handle NaN's more gracefully than standard Julia
 using NaNStatistics
@@ -24,24 +22,26 @@ import Interpolations: LinearInterpolation
 # Numerical integration
 using NumericalIntegration
 import NumericalIntegration as nui
+#= import PyPlot as plt =#
+# using Plots
+import Plots
+# import Plots: plot, plot!
+Plots.gr()
+# Plots.gui()
 using Term.Progress
 include("./SpecHelpers.jl")
 using .SpecHelpers
 export load_neblines, load_fits_cube
-
-
 # Physical constants
 const ckms = SpeedOfLightInVacuum |> u"km/s"
 const caps = SpeedOfLightInVacuum |> u"Å/s"
-
 datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
-#= include("./helpers.jl") =#
 include("./ContSubt.jl")
 export cont_subt
-# include("./SpectralCubes.jl")
-# using .SpectralCubes
 
-"""    quickload_neblines()
+
+"""
+    quickload_neblines()
 Load the default spectral line table.
 """
 function quickload_neblines()
@@ -180,7 +180,6 @@ mutable struct MIRICube <: AbstractSpectralCube
         linelist_path=joinpath(datapath, "neblines.dat"),
         lsf_file_path=joinpath(datapath, "jwst_miri_$(grating)_disp.fits"),
         z_init=0, reference_line=:OIII_5007)
-
         linelist = load_neblines(linelist_path)
         ddict = load_fits_cube(filepath)
         ddict = convert_ergscms_Å_units(ddict, instrument="NIRSpec")
@@ -813,7 +812,7 @@ the rest. The window width is customizable.
 ## Optional input
 - `window_width::Float64`: Half width in km/s of the fitting window around each line.
 """
-function make_lines_mask(mod::Model; window_width_kms::Float64=1000., plot_it::Bool=false)
+function make_lines_mask(mod::Model; window_width_kms::Float64=1000., plot_it::Bool=false, plot_comps::Bool=false)
     wave = coords(mod.domain)
     mask = falses(size(wave))
     for comp in keys(mod)
@@ -826,13 +825,20 @@ function make_lines_mask(mod::Model; window_width_kms::Float64=1000., plot_it::B
         mask[cenwave-window_width_ang .< wave .< cenwave+window_width_ang] .= 1
     end 
     if plot_it == true
-        plt.plot(coords(mod.domain), mod())
-        for comp in keys(mod.buffers)
-            comp == :main && continue
-            plt.plot(coords(mod.domain), mod.buffers[comp])
-        end 
-        plt.plot(coords(mod.domain), mask .* 0.5 .* maximum(mod()))
+        theexponent = log10.(mod()) |> maximum |> floor
+        thefactor = 10^theexponent
+        Plots.plot(coords(mod.domain), mask .* 0.5 .* maximum(mod())/thefactor, label="Mask")
+        if plot_comps
+            for comp in keys(mod.buffers)
+                comp == :main && continue
+                Plots.plot!(coords(mod.domain), mod.buffers[comp]./thefactor, label=string(comp))
+            end 
+        end
+        Plots.plot!(coords(mod.domain), mod()./thefactor, title="Model and mask", label="Model")
+        # Plots.plot!(coords(mod.domain), mask .* 0.5 ./ thefactor, label="Mask")
     end 
+    Plots.xlabel!("Wavelength")
+    Plots.gui()
     return mask
 end 
 

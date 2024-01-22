@@ -8,7 +8,7 @@ using NaNStatistics
 # For sigma clipping:
 using Photometry
 using Interpolations
-using PyPlot
+# using PyPlot
 
 # include("./SpecHelpers.jl")
 ### This part is only relevant for my Sunburst NIRSpec project

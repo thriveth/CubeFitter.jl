@@ -439,7 +439,8 @@ Extract the spectrum from the spaxel with coordinates 33, 44:
 julia> fit_spectrum_from_subcube(cube, xrange=33:33, yrange=44:44)
 ```
 """
-function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_component=false)
+function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_component=false,
+    line_selection=nothing)
     if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
     if isa(yrange, Nothing); yrange=range(1, size(cube.fluxcube)[2]); end
     wave_init = cube.wave
@@ -450,7 +451,7 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
     # @debug xrange yrange goodwave, count(notnan)
     @debug "Goodwave: " goodwave
     mod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(goodwave),
-        broad_component=broad_component)
+        broad_component=broad_component, line_selection=line_selection)
     @debug "First pass at making model done!"
     idx = make_lines_mask(mod)
     @debug "Made lines mask for $xrange, $yrange !"
@@ -458,7 +459,7 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
     @debug "Before and after line masking: " length(goodwave), length(lwave)
     if length(lwave) == 0; return NaN; end
     lmod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(lwave),
-        broad_component=broad_component)
+        broad_component=broad_component, line_selection=line_selection)
     lmeas = Measures(Domain(lwave), lspec, lerrs)
     @debug "Model before fitting: $xrange, $yrange:  " lmod lmeas lwave
     if !(cube.ref_line in keys(lmod)); return NaN; end
@@ -483,11 +484,12 @@ end
 
 
 
-function makeresultdict(cube; broad_component=false)
+function makeresultdict(cube; broad_component=false, lines_select=nothing)
     @debug "Making output dict"
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
     neblines = cube.linelist
     wave = cube.wave
+    if lines_select isa Nothing; lines_select=Symbol.(neblines[:, :name]); end
     # Create dictionary to hold the fit results.
     slices_dict = Dict()
     slices_dict[:refline] = cube.ref_line
@@ -496,6 +498,7 @@ function makeresultdict(cube; broad_component=false)
     # slices_dict[:primhead]["REFLINE"] = cube.ref_line
     # set_comment!(slices_dict[:primhead], "REFLINE", "Reference line used for line fitting.")
     for scomp in neblines.name
+        if ! (Symbol(scomp) in lines_select); continue; end
         lamvac = neblines[neblines.name .== scomp, :lamvac][1]
         obsvac = lamvac * (1 + cube.z_init)
         if (minimum(ustrip.(wave)) > obsvac) | (maximum(ustrip.(wave)) < obsvac)
@@ -537,7 +540,7 @@ most likely standard settings.
 The only one thing that is settable here is whether to include a second, broader kinematic
 component in the model. 
 """
-function fit_cube(cube; broad_component=false)
+function fit_cube(cube; broad_component=false, line_selection=nothing)
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
     slices_dict = makeresultdict(cube, broad_component=broad_component)
     @debug "Made slices_dict"
@@ -553,7 +556,7 @@ function fit_cube(cube; broad_component=false)
                 continue
             end
             fitdict = fit_spectrum_from_subcube(
-                cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component)
+                cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=line_selection)
             if !isa(fitdict, Dict)
                 @debug "Fitdict $x, $y was not a dict!"
                 continue
@@ -568,6 +571,15 @@ function fit_cube(cube; broad_component=false)
     slices_dict[:mom0] = mom0
     slices_dict[:mom0] = mom1
     slices_dict[:mom0] = mom2
+    # Remove empty slices
+    for s in slices_dict |> keys
+        if !(slices_dict[s] isa Array); continue; end
+        slice = slices_dict[s][:,:,1]
+        if count(isnan.(slice)) == length(slice)
+            delete!(slices_dict, s)
+        end
+    end
+    
     return slices_dict
 end 
 
@@ -600,10 +612,15 @@ Optional arguments:
   input file.
 """
 function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100,
-    dom_init=nothing, broad_component=false)
+    dom_init=nothing, broad_component=false, line_selection=nothing)
     redss = (1. + cube.z_init)  # Just for convenience
     wave = cube.wave
     neblines = cube.linelist
+    # @assert
+    if line_selection isa Nothing; line_selection = Symbol.(neblines[:, "name"]); end
+    # println(line_selection)
+    # return
+    union!(line_selection, [cube.ref_line])
     if isa(dom_init, Nothing); dom_init = Domain(wave); end
     @debug "buld_model() domain: " xrange yrange dom_init
     spec_init, errs_init = make_spectrum_from_cutout(cube, xrange, yrange)
@@ -611,6 +628,7 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
     complist = Vector{Symbol}()
     λobs_ref = neblines[neblines.name .== string(cube.ref_line), :lamvac][1] * (redss)
     for l in neblines.name[1:end]
+        if ! (Symbol(l) in line_selection); continue; end
         lamvac  = neblines[neblines.name.==l, :lamvac][1]
         lam_obs = lamvac * redss
         @debug "Build model: domain min max" (dom_init |> coords |> extrema)

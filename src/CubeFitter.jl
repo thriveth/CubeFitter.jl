@@ -3,7 +3,7 @@ module CubeFitter
 export AbstractSpectralCube, NIRSpecCube, MUSECube
 export calculate_moments, fit_cube, fit_spectrum_from_subcube
 export make_spectrum_from_cutout, make_lines_mask, toggle_fnu_flam
-export write_maps_to_fits, write_spectral_cube_to_fits, quickload_neblines
+export write_maps_to_fits, write_spectral_cube_to_fits, quickload_neblines, quicklook_slice
 ###============================================================###
 using Measurements: result
 # Basic computing functionality, misc.
@@ -1016,17 +1016,27 @@ function write_maps_to_fits(filepath::String, mapsdict::Dict)
 end 
 
 """    quicklook_slice(slicedict, name; what="data", norm="sqrt", colorlimits=nothing)
+Quick and convenient visualization of slices output fromthe `fit_cube()` function.
+# Parameters
+- `slicedict::Dict`: The dictionary containing the data slices
+- `name::Symbol`: Key for the slice to visualize
+# Optional parameters
+- `norm`: Function to normalize/color scale the data. Must be callable with a single argument.
+  E.g., `identity`, `sqrt`, `log10`, or similar. 
+- `what::Symbol`: One of wither `:data`, `:errs`, or `:snr`
+- `cmap::Symbol`: The colormap to use with `Plots.heatmap()`.
+- `colorlimits::Tuple`: Tuple of (min, max) color cut values.
 """
-function quicklook_slice(slicedict, name; what="data", norm=identity, colorlimits=nothing, cmap="cubehelix")
+function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits=nothing, cmap="cubehelix")
     theslice = slicedict[Symbol(name)]
-    layers = Dict(:data => 1, :errs => 2, :qual => 3)
+    layers = Dict(:data => 1, :errs => 2, :snr => 3)
     thelayer = layers[Symbol(what)]
     data = transpose(theslice[:,:,thelayer])
-    if colorlimits==nothing
+    if colorlimits isa Nothing
         colorlimits = (nanpctile(data, 2), nanpctile(data, 99))
     end
     data = clamp.(data, colorlimits[1], colorlimits[2])
-    Plots.heatmap(data .|> norm, aspect_ratio=:equal, color=:magma)
+    Plots.heatmap(data .|> norm, aspect_ratio=:equal, color=cmap)
 end 
 
 end  # End module

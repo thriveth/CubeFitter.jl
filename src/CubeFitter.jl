@@ -640,9 +640,10 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int
         foverha = neblines[neblines.name.==l, :foverha][1]
         @debug l neblines.name
         norm = fha_g * foverha
-        fwhm_inst = cube.lsf_fitter(λobs_ref)
+        # fwhm_inst = cube.lsf_fitter(λobs_ref)
+        fwhm_inst = cube.lsf_fitter(lam_obs)
         # @debug "Resolving power at line $l: " fwhm_inst
-        fwhm_tot = sqrt(fwhm_int^2 + fwhm_int^2)
+        fwhm_tot = sqrt(fwhm_int^2)  # + fwhm_int^2)
         @assert isa(fwhm_tot, Number)
         @assert isa(lamvac, Number)
         @assert isa(cube.z_init, Number)

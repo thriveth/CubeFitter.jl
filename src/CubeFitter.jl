@@ -289,7 +289,7 @@ function get_resolving_power_nirspec(grating::String; calib_path=datapath)  #"./
     angwave = read(fitsfile[2], "WAVELENGTH") * u"μm" .|> u"angstrom"
     R = read(fitsfile[2], "R")
     @debug extrema(angwave) extrema(R)
-    itp = LinearInterpolation(ustrip.(angwave), R)
+    itp = LinearInterpolation(ustrip.(angwave), R, extrapolation_bc=Flat())
     return itp
 end
 
@@ -384,8 +384,8 @@ end
 Convert fnu data to flam units, and vice versa. Input must be Unitful™ (i.e., Quantities).
 """
 function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)
-    if isa(xrange, Nothing); xrange = (1:size(cube.fluxcube)[1]); end
-    if isa(yrange, Nothing); yrange = (1:size(cube.fluxcube)[2]); end
+    if xrange isa Nothing; xrange = (1:size(cube.fluxcube)[1]); end
+    if yrange isa Nothing; yrange = (1:size(cube.fluxcube)[2]); end
     cutout_spec = cube.fluxcube[xrange, yrange, :]
     cutout_errs = cube.errscube[xrange, yrange, :]
     slice = cutout_spec[:,:,1]
@@ -737,7 +737,7 @@ end
 """    _gauss_line(waves, lab_wave, redshift, fwhm_kms, norm, lsf)
 """
 function _gauss_line(
-    waves::Array, lab_wave::Float64, redshift::Float64, fwhm_kms::Float64, norm::Float64, lsf::Float64)  #, grating="g140h")
+    waves::Array, lab_wave::Float64, redshift::Float64, fwhm_kms::Float64, norm::Float64, lsf::Float64)
     cen_wave = lab_wave * (1. + redshift)
     fwhm_inst = cen_wave / lsf  # get_resolving_power(
         # cen_wave, instrument=instrument, order=order, grism=grating)
@@ -891,17 +891,19 @@ Quick and coarse estimate of the integrated flux within a wavelength window
 without actual fitting.
 """
 function estimate_line_snr(wave, flux; err=nothing)
-    if isa(err, Nothing)
+    if err isa Nothing
         median_fit = running_median(flux, 3, :sym, nan=:ignore)
         nuisance_be_gone = flux .- median_fit
         stddev = nanstd(nuisance_be_gone) .* ones(size(flux))
     else
         stddev = err
     end 
+    stddev = abs.(stddev)
     uflux = flux .± stddev
     usum = nansum(uflux)
     snr = Measurements.value(usum)/Measurements.uncertainty(usum)
-    if isnan(snr); snr = 0.1; end
+    if isnan(snr); snr = 0.1; flux=[0]; end
+    if flux |> maximum |> isnan; outflux = 0; else; outflux = flux |> maximum; end
     return snr
 end 
 

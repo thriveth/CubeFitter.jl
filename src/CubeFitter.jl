@@ -988,9 +988,11 @@ function write_spectral_cube_to_fits(filepath::String, spectralcube::NIRSpecCube
     f = FITS(filepath, "w")
     primhead = spectralcube.primheader; primhead["CONTINUE"] = ""
     header = spectralcube.header; header["CONTINUE"] = ""
+    flux = spectralcube.fluxcube .* spectralcube.flux_convert
+    errs = spectralcube.errscube .* spectralcube.flux_convert
     write(f, Float64[], header=primhead)
-    write(f, spectralcube.fluxcube .* spectralcube.flux_convert, header=header, name="SCI")
-    write(f, spectralcube.errscube .* spectralcube.flux_convert, header=header, name="ERR")
+    write(f, flux, header=header, name="SCI")
+    write(f, errs, header=header, name="ERR")
     close(f)
 end
 

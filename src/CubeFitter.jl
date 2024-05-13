@@ -127,9 +127,9 @@ mutable struct NIRSpecCube <: AbstractSpectralCube
     function NIRSpecCube(filepath::String, grating::String; 
             linelist_path=joinpath(datapath, "neblines.dat"), 
             lsf_file_path=joinpath(datapath, "jwst_nirspec_$(grating)_disp.fits"), 
-            z_init=0.0, reference_line=:OIII_5007) 
+            z_init=0.0, reference_line=:OIII_5007, data_ext="SCI", error_ext="ERR") 
         linelist = load_neblines(linelist_path)
-        ddict = load_fits_cube(filepath)
+        ddict = load_fits_cube(filepath, data_ext=data_ext, error_ext=error_ext)
         origflux = deepcopy(ddict[:Data])
         ddict = convert_ergscms_Å_units(ddict; instrument="NIRSpec")
         wave = ustrip.(ddict[:Wave])
@@ -611,7 +611,7 @@ Optional arguments:
   norm=1., and the others are scaled according to the values of `foverha` given in the line list
   input file.
 """
-function build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100,
+function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int=100,
     dom_init=nothing, broad_component=false, line_selection=nothing)
     redss = (1. + cube.z_init)  # Just for convenience
     wave = cube.wave
@@ -1018,6 +1018,7 @@ function write_maps_to_fits(filepath::String, mapsdict::Dict)
     close(f)
     return nothing
 end 
+
 
 """    quicklook_slice(slicedict, name; what="data", norm="sqrt", colorlimits=nothing)
 Quick and convenient visualization of slices output fromthe `fit_cube()` function.

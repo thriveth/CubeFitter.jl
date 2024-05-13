@@ -35,12 +35,12 @@ quantities read or derived from the cube.
 - Dict containing wave array, data and error cube, and headers from the primary HDU and
   first extension from the data file.
 """
-function load_fits_cube(inpath::String)::Dict{Symbol, Any}
+function load_fits_cube(inpath::String; data_ext="SCI", error_ext="ERR")
     fitsfile = FITS(inpath, "r")
-    header = read_header(fitsfile[2])
+    header = read_header(fitsfile[data_ext])
     primary = read_header(fitsfile[1])
-    data = read(fitsfile[2])
-    errs = read(fitsfile[3])
+    data = read(fitsfile[data_ext])
+    errs = read(fitsfile[error_ext])
     naxis3 = header["NAXIS3"]
     crval3 = header["CRVAL3"]
     if haskey(header, "CDELT3")

@@ -380,7 +380,8 @@ function toggle_fnu_flam(influx, wave; verbose=false::Bool)::Array
 end
 
 
-"""    make_spectrum_from_cutout()
+"""
+    make_spectrum_from_cutout()
 Convert fnu data to flam units, and vice versa. Input must be Unitful™ (i.e., Quantities).
 """
 function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)

@@ -1044,4 +1044,27 @@ function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits
     Plots.heatmap(data .|> norm, aspect_ratio=:equal, color=cmap)
 end 
 
+
+function quicklook_fit_result_dict(indict)
+    Plots.plot(indict[:wave], indict[:spec], color=:gray)
+    Plots.plot!(indict[:wave], indict[:errs])
+    inmodel = indict[:results]
+    Plots.plot!(inmodel.domain.axis[1], inmodel(), linewidth=2)
+    for b in inmodel.buffers |> keys
+        Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
+    end
+end
+
+
+function quicklook_model(inmodel)
+    Plots.plot(inmodel.domain.axis[1], inmodel(), linewidth=2)
+    for b in inmodel.buffers |> keys
+        Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
+    end
+end
+
+function quicklook_model_fit(resultdict)
+end
+
+
 end  # End module

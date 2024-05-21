@@ -3,7 +3,8 @@ module CubeFitter
 export AbstractSpectralCube, NIRSpecCube, MUSECube
 export calculate_moments, fit_cube, fit_spectrum_from_subcube
 export make_spectrum_from_cutout, make_lines_mask, toggle_fnu_flam
-export write_maps_to_fits, write_spectral_cube_to_fits, quickload_neblines, quicklook_slice
+export write_maps_to_fits, write_spectral_cube_to_fits, quickload_neblines
+export quicklook_slice, quicklook_model, quicklook_fit_result_dict
 ###============================================================###
 using Measurements: result
 # Basic computing functionality, misc.
@@ -441,7 +442,7 @@ julia> fit_spectrum_from_subcube(cube, xrange=33:33, yrange=44:44)
 ```
 """
 function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_component=false,
-    line_selection=nothing, kinematics_from=nothing)
+    line_selection=nothing, kinematics_from=nothing, min_snr=0.5)
     if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
     if isa(yrange, Nothing); yrange=range(1, size(cube.fluxcube)[2]); end
     wave_init = cube.wave
@@ -450,9 +451,9 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
     notnan = nanmask10(spec, errs)
     goodwave, goodspec, gooderrs = wave_init[notnan], spec[notnan], errs[notnan]
     # @debug xrange yrange goodwave, count(notnan)
-    @debug "Goodwave: " goodwave
+    # @debug "Goodwave: " goodwave
     mod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(goodwave),
-        broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from)
+        broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from, min_snr=min_snr)
     @debug "First pass at making model done!"
     idx = make_lines_mask(mod)
     @debug "Made lines mask for $xrange, $yrange !"
@@ -460,8 +461,9 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
     @debug "Before and after line masking: " length(goodwave), length(lwave)
     if length(lwave) == 0; return NaN; end
     lmod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(lwave),
-        broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from)
+        broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from, min_snr=min_snr)
     lmeas = Measures(Domain(lwave), lspec, lerrs)
+    # return lmod, lmeas
     @debug "Model before fitting: $xrange, $yrange:  " lmod lmeas lwave
     if !(cube.ref_line in keys(lmod)); return NaN; end
     try  # Too many things can go wrong to catch eatch one separately.
@@ -530,8 +532,7 @@ function makeresultdict(cube; broad_component=false, lines_select=nothing)
 end
 
 
-"""
-    fit_cube(cube)
+"""    fit_cube(cube)
 Fit the entire cube spaxel-by-spaxel.
 
 This is a convenience function to perform that one action we want to perform 90% of the time.
@@ -620,11 +621,15 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
     # @assert
     if line_selection isa Nothing; line_selection = Symbol.(neblines[:, "name"]); end
     if !(kinematics_from isa Nothing); lock_kinematics=true; end
+    if broad_component & !(kinematics_from isa Nothing)
+        println("Building kinematics from existing model is not implemented for two components yet")
+        return NaN
+    end
     # println(line_selection)
     # return
     union!(line_selection, [cube.ref_line])
     if isa(dom_init, Nothing); dom_init = Domain(wave); end
-    @debug "buld_model() domain: " xrange yrange dom_init
+    @debug "build_model() domain: " xrange yrange dom_init
     spec_init, errs_init = make_spectrum_from_cutout(cube, xrange, yrange)
     components = OrderedDict()
     complist = Vector{Symbol}()
@@ -656,29 +661,30 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
             @debug "Numerical integration of line $l failed due to lack of data." l
             continue
         end
-        @debug "Results of numerical integration" fha_g
-        foverha = neblines[neblines.name.==l, :foverha][1]
-        @debug l neblines.name
-        norm = fha_g * foverha
+        norm = estimate_line_snr(wave[idx], spec_init[idx], err=errs_init[idx], only_flux=true)
+        # println("normold, norm ", normold, " ", norm)
         # fwhm_inst = cube.lsf_fitter(λobs_ref)
         fwhm_inst = cube.lsf_fitter(lam_obs)
         # @debug "Resolving power at line $l: " fwhm_inst
-        fwhm_tot = sqrt(fwhm_int^2)  # + fwhm_int^2)
-        @assert isa(fwhm_tot, Number)
-        @assert isa(lamvac, Number)
-        @assert isa(cube.z_init, Number)
-        @assert isa(foverha, Number)
-        @assert isa(norm, Number) "$foverha"
-        @assert isa(lamvac, Number)
+        if kinematics_from isa Nothing
+            fwhm_tot = sqrt(fwhm_int^2)  # + fwhm_int^2)
+            zz = cube.z_init
+        else
+            fwhm_tot = sqrt(kinematics_from[cube.ref_line].fwhm_kms.val^2)  # ^2 + fwhm_inst^2)
+            zz = kinematics_from[cube.ref_line].redshift.val
+            # if broad_component; zz_broad=kinematics_from
+        end
+        # if kinematics_from; fwhm_tot
         g = GModelFit.FComp(
-            _gauss_line, [:waves], lab_wave=lamvac, redshift=cube.z_init,
+            _gauss_line, [:waves], lab_wave=lamvac, redshift=zz,
             fwhm_kms=fwhm_tot, norm=norm, lsf=fwhm_inst)
         components[Symbol(l)] = g # = ref_line
         append!(complist, [Symbol(l)])
+        
         if broad_component
             g2 = GModelFit.FComp(
-                _gauss_line, [:waves], lab_wave=lamvac, redshift=cube.z_init,
-                fwhm_kms=fwhm_tot*1.5, norm=norm* 0.3, lsf=fwhm_inst)
+                _gauss_line, [:waves], lab_wave=lamvac, redshift=zz,
+                fwhm_kms=fwhm_tot*1.5, norm=norm*0.3, lsf=fwhm_inst)
             components[Symbol(l * "_broad")] = g2 # = ref_line
             append!(complist, [Symbol(l * "_broad")])
         end
@@ -709,8 +715,14 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
             mod[comp].lab_wave.fixed = true
             mod[comp].redshift.low = cube.z_init - cube.z_init * 0.1
             mod[comp].redshift.high = cube.z_init + cube.z_init * 0.1
-            mod[comp].redshift.patch = refline
-            mod[comp].fwhm_kms.patch = refline
+
+            if kinematics_from isa Nothing
+                mod[comp].redshift.patch = refline
+                mod[comp].fwhm_kms.patch = refline
+            else
+                mod[comp].fwhm_kms.fixed = true
+                mod[comp].redshift.fixed = true
+            end
             # mod[comp].fwhm_kms.low = 1.
             # mod[comp].fwhm_kms.high = 2000.
             mod[comp].norm.low = 0.
@@ -724,6 +736,10 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
             mod[comp].lab_wave.fixed = true
             mod[comp].norm.low = 0.
             mod[comp].lsf.fixed = true
+            if !(kinematics_from isa Nothing)
+                mod[comp].redshift.fixed = true
+                mod[comp].fwhm_kms.fixed = true
+            end
             if endswith(String(comp), "_broad")
                 mod[comp].redshift.val = cube.z_init - cube.z_init * 0.001
                 mod[comp].fwhm_kms.patch = @λ (m, v) -> v + m[Symbol(cube.ref_line)].fwhm_kms
@@ -892,7 +908,7 @@ end
 Quick and coarse estimate of the integrated flux within a wavelength window
 without actual fitting.
 """
-function estimate_line_snr(wave, flux; err=nothing)
+function estimate_line_snr(wave, flux; err=nothing, only_flux=false)
     if err isa Nothing
         median_fit = running_median(flux, 3, :sym, nan=:ignore)
         nuisance_be_gone = flux .- median_fit
@@ -906,6 +922,7 @@ function estimate_line_snr(wave, flux; err=nothing)
     snr = Measurements.value(usum)/Measurements.uncertainty(usum)
     if isnan(snr); snr = 0.1; flux=[0]; end
     if flux |> maximum |> isnan; outflux = 0; else; outflux = flux |> maximum; end
+    if only_flux; return Measurements.value(usum); end
     return snr
 end 
 
@@ -1034,7 +1051,7 @@ Quick and convenient visualization of slices output fromthe `fit_cube()` functio
 - `cmap::Symbol`: The colormap to use with `Plots.heatmap()`.
 - `colorlimits::Tuple`: Tuple of (min, max) color cut values.
 """
-function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits=nothing, cmap="cubehelix")
+function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits=nothing, cmap=:cubehelix)
     theslice = slicedict[Symbol(name)]
     layers = Dict(:data => 1, :errs => 2, :snr => 3)
     thelayer = layers[Symbol(what)]
@@ -1055,6 +1072,7 @@ function quicklook_fit_result_dict(indict)
     for b in inmodel.buffers |> keys
         Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
     end
+    Plots.hline!([0], color=:black, linewidth=1,)
 end
 
 
@@ -1063,6 +1081,7 @@ function quicklook_model(inmodel)
     for b in inmodel.buffers |> keys
         Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
     end
+    Plots.hline!([0], color=:black, linewidth=1,)
 end
 
 function quicklook_model_fit(resultdict)

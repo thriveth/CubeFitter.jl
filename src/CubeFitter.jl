@@ -82,7 +82,7 @@ global_logger(NullLogger())
 abstract type AbstractSpectralCube end
 
 
-"""
+"""    GenericSpectralCube(filepath; <keyword arguments>)
 Thus far, this is not actually implemented.
 It is planned to be a barebones solution for cubes that are not from any of the
 explicitly supported.

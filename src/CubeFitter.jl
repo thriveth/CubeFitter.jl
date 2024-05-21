@@ -35,8 +35,7 @@ include("./ContSubt.jl")
 export cont_subt
 
 
-"""
-    quickload_neblines()
+"""    quickload_neblines()
 Load the default spectral line table.
 """
 function quickload_neblines()
@@ -218,6 +217,9 @@ end
 ### === End of various instrument data structs. This should probably be extracted out into a module
 ### of its own some time. 
 
+"""    estimate_redshift_reference_line_flux(cube; xrange=nothing, yrange=nothing)
+Estimate the redshift and line flux of a line given data and line ID.
+"""
 function estimate_redshift_reference_line_flux(spec_cube; xrange=nothing, yrange=nothing)
     wave = spec_cube.wave
     spec_guess, _ = make_spectrum_from_cutout(spec_cube, xrange, yrange)
@@ -380,8 +382,7 @@ function toggle_fnu_flam(influx, wave; verbose=false::Bool)::Array
 end
 
 
-"""
-    make_spectrum_from_cutout()
+"""    make_spectrum_from_cutout()
 Convert fnu data to flam units, and vice versa. Input must be Unitful™ (i.e., Quantities).
 """
 function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)
@@ -402,8 +403,7 @@ function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)
 end
 
 
-"""
-    fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
+"""    fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
 
 Extract a subcube as a spectrum, and pass it to the 1D spectrum fitter. 
 
@@ -441,7 +441,7 @@ julia> fit_spectrum_from_subcube(cube, xrange=33:33, yrange=44:44)
 ```
 """
 function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_component=false,
-    line_selection=nothing)
+    line_selection=nothing, kinematics_from=nothing)
     if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
     if isa(yrange, Nothing); yrange=range(1, size(cube.fluxcube)[2]); end
     wave_init = cube.wave
@@ -452,7 +452,7 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
     # @debug xrange yrange goodwave, count(notnan)
     @debug "Goodwave: " goodwave
     mod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(goodwave),
-        broad_component=broad_component, line_selection=line_selection)
+        broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from)
     @debug "First pass at making model done!"
     idx = make_lines_mask(mod)
     @debug "Made lines mask for $xrange, $yrange !"
@@ -460,7 +460,7 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
     @debug "Before and after line masking: " length(goodwave), length(lwave)
     if length(lwave) == 0; return NaN; end
     lmod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(lwave),
-        broad_component=broad_component, line_selection=line_selection)
+        broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from)
     lmeas = Measures(Domain(lwave), lspec, lerrs)
     @debug "Model before fitting: $xrange, $yrange:  " lmod lmeas lwave
     if !(cube.ref_line in keys(lmod)); return NaN; end
@@ -613,12 +613,13 @@ Optional arguments:
   input file.
 """
 function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int=100,
-    dom_init=nothing, broad_component=false, line_selection=nothing)
+    dom_init=nothing, broad_component=false, line_selection=nothing, kinematics_from=nothing, lock_kinematics=false)
     redss = (1. + cube.z_init)  # Just for convenience
     wave = cube.wave
     neblines = cube.linelist
     # @assert
     if line_selection isa Nothing; line_selection = Symbol.(neblines[:, "name"]); end
+    if !(kinematics_from isa Nothing); lock_kinematics=true; end
     # println(line_selection)
     # return
     union!(line_selection, [cube.ref_line])
@@ -627,9 +628,9 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
     spec_init, errs_init = make_spectrum_from_cutout(cube, xrange, yrange)
     components = OrderedDict()
     complist = Vector{Symbol}()
-    λobs_ref = neblines[neblines.name .== string(cube.ref_line), :lamvac][1] * (redss)
+    # λobs_ref = neblines[neblines.name .== string(cube.ref_line), :lamvac][1] * (redss)
     for l in neblines.name[1:end]
-        if ! (Symbol(l) in line_selection); continue; end
+        if !(Symbol(l) in line_selection); continue; end
         lamvac  = neblines[neblines.name.==l, :lamvac][1]
         lam_obs = lamvac * redss
         @debug "Build model: domain min max" (dom_init |> coords |> extrema)
@@ -698,7 +699,7 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
             @debug "Comp was `:main`, moving on"
             continue
         # elseif comp != Symbol(cube.ref_line)
-        elseif ! (comp in [Symbol(cube.ref_line), Symbol(String(cube.ref_line) * "_broad")])
+        elseif !(comp in [Symbol(cube.ref_line), Symbol(String(cube.ref_line) * "_broad")])
             @debug "Fixing parameters for $comp"
             if endswith(String(comp), "_broad")
                 refline = Symbol(String(cube.ref_line) * "_broad")

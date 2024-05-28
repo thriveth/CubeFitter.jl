@@ -542,7 +542,7 @@ most likely standard settings.
 The only one thing that is settable here is whether to include a second, broader kinematic
 component in the model. 
 """
-function fit_cube(cube; broad_component=false, line_selection=nothing)
+function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1.0, kinematics_from_lines=nothing)
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
     slices_dict = makeresultdict(cube, broad_component=broad_component)
     @debug "Made slices_dict"
@@ -557,22 +557,47 @@ function fit_cube(cube; broad_component=false, line_selection=nothing)
                 #@warn "Pixel ($x, $y) has > 50% NaN; moving on"
                 continue
             end
+            if kinematics_from_lines isa Nothing
+                model_lines = line_selection
+            else
+                model_lines = kinematics_from_lines
+            end
             fitdict = fit_spectrum_from_subcube(
-                cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=line_selection)
+                cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=model_lines)
             if !isa(fitdict, Dict)
                 @debug "Fitdict $x, $y was not a dict!"
                 continue
             end
-            # @debug x, y, typeof(x), typeof(y) typeof(fitdict[:results]) typeof(fitdict[:fitstats])
-            @debug fitdict[:results] fitdict[:fitstats]
+            linesdict = Dict(l => fitdict[:results][l] for l in fitdict[:results] |> keys if l != :main)
+            # fitdict[:linesdict] = linesdict
+            if !(kinematics_from_lines isa Nothing)
+                minwave, maxwave = (cube.wave |> minimum, cube.wave |> maximum) ./ (1 + cube.z_init)
+                if line_selection isa Nothing
+                    line_idx = minwave .< cube.linelist[:, :lamvac] .< maxwave
+                    line_selection = cube.linelist[line_idx, :name] .|> Symbol
+                end
+                forced_lines = setdiff(line_selection, kinematics_from_lines)
+                for l in forced_lines
+                    outdict = fit_spectrum_from_subcube(
+                        cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=[l],
+                        kinematics_from=fitdict[:results], min_snr=min_snr)
+                    if !(outdict isa Dict); continue; end
+                    if !(l in outdict[:results] |> keys); continue; end
+                    oo = outdict[:results][l]
+                    linesdict[l] = oo
+                    # linesdict[l] = outdict[:results][l]
+                end
+            end
+            # @debug fitdict[:results] fitdict[:fitstats]
+            fitdict[:linesdict] = linesdict
             fill_in_fit_values!(slices_dict, fitdict, (x, y))
-            sleep(0.001)
+            # sleep(0.001)
         end 
     end 
     mom0, mom1, mom2 = calculate_moments(cube)
     slices_dict[:mom0] = mom0
-    slices_dict[:mom0] = mom1
-    slices_dict[:mom0] = mom2
+    slices_dict[:mom1] = mom1
+    slices_dict[:mom2] = mom2
     # Remove empty slices
     for s in slices_dict |> keys
         if !(slices_dict[s] isa Array); continue; end
@@ -625,8 +650,6 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
         println("Building kinematics from existing model is not implemented for two components yet")
         return NaN
     end
-    # println(line_selection)
-    # return
     union!(line_selection, [cube.ref_line])
     if isa(dom_init, Nothing); dom_init = Domain(wave); end
     @debug "build_model() domain: " xrange yrange dom_init
@@ -654,7 +677,6 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
                 continue
             end 
         end
-
         fha_g, reds_g = estimate_redshift_reference_line_flux(
             cube, xrange=xrange, yrange=yrange)
         if isnan(fha_g) || isnan(reds_g)
@@ -690,11 +712,9 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
         end
         @debug "Added the line $l to the model"
     end 
-
     # First, define model with mutually independent components
     components[:main] = SumReducer(complist)
     mod = Model(dom_init, components)
-
     # Now: We set initial values, locked variables and interdependencies.
     for comp in keys(mod)
         @debug "Setting up $comp"
@@ -963,10 +983,10 @@ end
 """    fill_in_fit_values(dict::Dict, fitresults::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)
 """
 function fill_in_fit_values!(
-    dict::Dict{Any,Any}, fitresults::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)
+    dict::Dict{Any,Any}, fitdict::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)
     row, column = pix_coords
-    fitstats = fitresults[:fitstats].fitstat
-    fitresults = fitresults[:results]
+    fitstats = fitdict[:fitstats].fitstat
+    fitresults = fitdict[:results]
     @debug dict[:refline] fitresults[Symbol(dict[:refline])] 
     dict[:fitstats][row, column] = fitstats
     dict[:redshift][row, column, 1] = fitresults[Symbol(dict[:refline])].redshift.val
@@ -985,12 +1005,15 @@ function fill_in_fit_values!(
     end 
     fwhmu = dict[:fwhm][row, column, 1] ± dict[:fwhm][row, column, 2]
     sigmau = fwhm_to_sigma(fwhmu)
+    ## Fill in the fitted flux of each line in each spaxel
     for l in keys(dict)
-        if !(l in keys(fitresults))
+        if !(l in keys(fitdict[:linesdict]))
             continue
         end
-        normu = fitresults[l][:norm].val ± fitresults[l][:norm].unc
+        component = fitdict[:linesdict][l]
+        normu = component[:norm].val ± component[:norm].unc
         fluxu = sqrt(2π) * sigmau * normu
+        # fluxu = normu
         dict[l][row, column, 1] = fluxu.val
         dict[l][row, column, 2] = fluxu.err
         dict[l][row, column, 3] = fluxu.val/fluxu.err
@@ -1064,6 +1087,10 @@ function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits
 end 
 
 
+"""    quicklook_fit_result_dict(indict)
+# Parameters
+- `indict::Dict`: The output dictionary of `fit_spectrum_from_subcube`
+"""
 function quicklook_fit_result_dict(indict)
     Plots.plot(indict[:wave], indict[:spec], color=:gray)
     Plots.plot!(indict[:wave], indict[:errs])
@@ -1076,15 +1103,16 @@ function quicklook_fit_result_dict(indict)
 end
 
 
+"""    quicklook_model(inmodel)
+# Parameters
+- `inmodel::`: GModelFit.Model
+"""
 function quicklook_model(inmodel)
     Plots.plot(inmodel.domain.axis[1], inmodel(), linewidth=2)
     for b in inmodel.buffers |> keys
         Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
     end
     Plots.hline!([0], color=:black, linewidth=1,)
-end
-
-function quicklook_model_fit(resultdict)
 end
 
 

@@ -34,7 +34,7 @@ etc.; as well as the functions `cont_subt()`, `fit_cube()`, and
 This package is not yet registered to install (maybe later). To run it now, clone the
 repository to your preferred location; then:
 
-```julia-repl
+```julia
 julia> import Pkg
 julia> Pkg.activate("/path/to/CubeFitter.jl")
 julia> Pkg.instantiate()  # Install dependencies, needs only be done once.
@@ -50,7 +50,7 @@ prompt, and run `using CubeFitter`.
 
 A simple example of a session using `CubeFitter.jl`:
 
-```julia-repl
+```julia
 julia> cube = NIRSpecCube("/path/to/datacube.fits", "g140m"; z_init=2.43)
 julia> cscube = cont_subt(cube)
 julia> write_spectral_cube_to_fits("mycube.fits", cscube)

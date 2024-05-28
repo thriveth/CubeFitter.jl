@@ -34,7 +34,7 @@ etc.; as well as the functions `cont_subt()`, `fit_cube()`, and
 This package is not yet registered to install (maybe later). To run it now, clone the
 repository to your preferred location; then:
 
-```julia
+```julia-repl
 julia> import Pkg
 julia> Pkg.activate("/path/to/CubeFitter.jl")
 julia> Pkg.instantiate()  # Install dependencies, needs only be done once.
@@ -50,7 +50,7 @@ prompt, and run `using CubeFitter`.
 
 A simple example of a session using `CubeFitter.jl`:
 
-```julia
+```julia-repl
 julia> cube = NIRSpecCube("/path/to/datacube.fits", "g140m"; z_init=2.43)
 julia> cscube = cont_subt(cube)
 julia> write_spectral_cube_to_fits("mycube.fits", cscube)
@@ -104,7 +104,11 @@ fit simultaneously as above. Afterwards, the remaining lines will be fit one by
 one with their kinematics fixed to the one found from the template lines, and
 the flux left as the only free parameters. 
 
+<<<<<<< HEAD
 ```julia
+=======
+```julia-repl
+>>>>>>> b9fa5efd0b37870f53827ba1f715b76059d2686b
 julia> cscube = NIRSpecCube("/path/to/cont_subtracted/datacube.fits", "g140m"; z_init=0.76)
 julia> out = fit_cube(cscube, kinematics_from_lines=[:HI_4861, :OIII_4959, :OIII_5007])
 julia> quicklook_slice(out, :OIII_5007, norm=sqrt, cmap=:inferno)

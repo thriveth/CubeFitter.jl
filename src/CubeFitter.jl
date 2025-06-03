@@ -18,6 +18,7 @@ using Unitful, UnitfulAstro, UnitfulEquivalences, Measurements, PhysicalConstant
 using FITSIO, DataFrames, DataStructures, CSV
 # Interpolation, modeling and fitting
 using Polynomials, GModelFit, FastRunningMedian
+using GModelFit: AbstractComponent, Parameter, evaluate!
 import GModelFit as gmf
 import Interpolations: LinearInterpolation
 # Numerical integration
@@ -28,12 +29,17 @@ using Term.Progress
 include("./SpecHelpers.jl")
 using .SpecHelpers
 export load_neblines, load_fits_cube
+
 # Physical constants
 const ckms = SpeedOfLightInVacuum |> u"km/s"
 const caps = SpeedOfLightInVacuum |> u"Å/s"
 datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
 include("./ContSubt.jl")
 export cont_subt
+
+# Custom Gaussian component
+# include("./GaussianComponent.jl")
+# export EmissionGauss, gauss 
 
 
 """    quickload_neblines()
@@ -81,7 +87,6 @@ global_logger(NullLogger())
 # inheriting from it for various ls instruments, which require different treatments and
 # different kind of, and still be able to write functions which can operate on all of them. 
 abstract type AbstractSpectralCube end
-
 
 """    GenericSpectralCube(filepath; <keyword arguments>)
 Thus far, this is not actually implemented.
@@ -171,7 +176,7 @@ mutable struct MIRICube <: AbstractSpectralCube
     lsf_fitter
     z_init
     ref_line
-    function NIRSpecCube(filepath::String, grating::String;
+    function MIRICube(filepath::String, grating::String;
         linelist_path=joinpath(datapath, "neblines.dat"),
         lsf_file_path=joinpath(datapath, "jwst_miri_$(grating)_disp.fits"),
         z_init=0, reference_line=:OIII_5007)
@@ -184,7 +189,8 @@ mutable struct MIRICube <: AbstractSpectralCube
         header = ddict[:Header]
         primheader = ddict[:Primheader]
         itp = get_resolving_power("NIRSpec", setting=grating)
-        new(grating, wave, fluxcube, errscube, header, primheader, linelist, itp, z_init, reference_line)
+        new(grating, wave, fluxcube, errscube, header, primheader, 
+            linelist, itp, z_init, reference_line)
     end
 end
 
@@ -454,23 +460,33 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
     # @debug "Goodwave: " goodwave
     mod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(goodwave),
         broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from, min_snr=min_snr)
-    @debug "First pass at making model done!"
-    idx = make_lines_mask(mod)
-    @debug "Made lines mask for $xrange, $yrange !"
+    @debug "First pass at making model done!" mod
+    idx = make_lines_mask(mod, Domain(goodwave))
+    # @debug "Made lines mask for $xrange, $yrange !"
     lwave, lspec, lerrs = goodwave[idx], goodspec[idx], gooderrs[idx]
-    @debug "Before and after line masking: " length(goodwave), length(lwave)
+    # @debug "Before and after line masking: " length(goodwave), length(lwave)
     if length(lwave) == 0; return NaN; end
     lmod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(lwave),
         broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from, min_snr=min_snr)
     lmeas = Measures(Domain(lwave), lspec, lerrs)
+    # return lmod
     # return lmod, lmeas
     @debug "Model before fitting: $xrange, $yrange:  " lmod lmeas lwave
     if !(cube.ref_line in keys(lmod)); return NaN; end
+    # DEBUG:
+    @debug lmod, lmeas
+    @debug "Now trying for a fit" xrange yrange
+    @debug lmod
+    # results, stats = gmf.fit(lmod, lmeas, gmf.lsqfit())
+    # results, stats = gmf.fit(lmod, lmeas, minimizer=gmf.lsqfit())
+    #@info "Successfully fitted (col. $xrange, row $yrange)"
+    # @debug "Results and stats!" results stats
+    # END: 
     try  # Too many things can go wrong to catch eatch one separately.
-        # results, stats = gmf.fit(lmod, lmeas)
-        results, stats = gmf.fit(lmod, lmeas, minimizer=gmf.lsqfit())
+        results, stats = gmf.fit(lmod, lmeas, gmf.lsqfit())
+        # results, stats = gmf.fit(lmod, lmeas, minimizer=gmf.lsqfit())
         #@info "Successfully fitted (col. $xrange, row $yrange)"
-        @debug results stats
+        @debug "Results and stats!" results stats
         output = Dict(
             :wave => goodwave,
             :spec => goodspec,
@@ -478,10 +494,9 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
             :measure => lmeas,
             :results => results,
             :fitstats => stats)
-        return output 
+        return output
     catch
-        #@warn "Fitting (col. $xrange, row $yrange) failed! Moving on"
-        return NaN
+        return lmod
     end 
 end
 
@@ -505,7 +520,7 @@ function makeresultdict(cube; broad_component=false, lines_select=nothing)
         lamvac = neblines[neblines.name .== scomp, :lamvac][1]
         obsvac = lamvac * (1 + cube.z_init)
         if (minimum(ustrip.(wave)) > obsvac) | (maximum(ustrip.(wave)) < obsvac)
-            @debug "Line $scomp outside  wavelength range, skipping"
+            # @debug "Line $scomp outside wavelength range, skipping"
             continue
         end 
         comp = Symbol(scomp)
@@ -552,7 +567,7 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
             # numnan = size((collect(isnan.(cube.fluxcube[x, y, :]))))
             numnan = count(isnan.(cube.fluxcube[x, y, :]))
             nanratio = numnan/length(cube.wave)
-            @debug "Number of nans in x=$x, y=$y: " numnan size(cube.fluxcube) nanratio
+            # @debug "Number of nans in x=$x, y=$y: " numnan size(cube.fluxcube) nanratio
             if nanratio > 0.5
                 #@warn "Pixel ($x, $y) has > 50% NaN; moving on"
                 continue
@@ -564,8 +579,10 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
             end
             fitdict = fit_spectrum_from_subcube(
                 cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=model_lines)
+            @debug "What's a fitdict anyway?" fitdict typeof(fitdict)
             if !isa(fitdict, Dict)
                 @debug "Fitdict $x, $y was not a dict!"
+                # break
                 continue
             end
             linesdict = Dict(l => fitdict[:results][l] for l in fitdict[:results] |> keys if l != :main)
@@ -581,6 +598,7 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
                     outdict = fit_spectrum_from_subcube(
                         cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=[l],
                         kinematics_from=fitdict[:results], min_snr=min_snr)
+                    # Do not fail gracefully, just flip the table and move on.
                     if !(outdict isa Dict); continue; end
                     if !(l in outdict[:results] |> keys); continue; end
                     oo = outdict[:results][l]
@@ -606,10 +624,8 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
             delete!(slices_dict, s)
         end
     end
-    
     return slices_dict
 end 
-
 
 
 """    build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100, dom_init=nothing)
@@ -697,9 +713,10 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
             # if broad_component; zz_broad=kinematics_from
         end
         # if kinematics_from; fwhm_tot
-        g = GModelFit.FComp(
-            _gauss_line, [:waves], lab_wave=lamvac, redshift=zz,
+        g = GModelFit.FComp(_gauss_line, [:waves];
+            lab_wave=lamvac, redshift=zz,
             fwhm_kms=fwhm_tot, norm=norm, lsf=fwhm_inst)
+        # g = GModelFit.Gaussian
         components[Symbol(l)] = g # = ref_line
         append!(complist, [Symbol(l)])
         
@@ -713,8 +730,13 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
         @debug "Added the line $l to the model"
     end 
     # First, define model with mutually independent components
+    # @debug "What if broad model?" dom_init components
     components[:main] = SumReducer(complist)
-    mod = Model(dom_init, components)
+    @debug "Components before building model" components
+    mod = Model(components)
+    # mod[:main] = SumReducer(complist)
+    @debug "SumReducer succeeded!" components
+    # mod = Model(dom_init, components)
     # Now: We set initial values, locked variables and interdependencies.
     for comp in keys(mod)
         @debug "Setting up $comp"
@@ -762,12 +784,13 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
             end
             if endswith(String(comp), "_broad")
                 mod[comp].redshift.val = cube.z_init - cube.z_init * 0.001
-                mod[comp].fwhm_kms.patch = @λ (m, v) -> v + m[Symbol(cube.ref_line)].fwhm_kms
+                mod[comp].fwhm_kms.patch = @fd (m, v) -> v + m[Symbol(cube.ref_line)].fwhm_kms
+                # mod[comp].fwhm_kms.patch = @λ(m, v) -> v + m[Symbol(cube.ref_line)].fwhm_kms
                 mod[comp].fwhm_kms.low = 0.
             end 
         end 
     end 
-    @debug "`build_model()` successfully done!"
+    @debug "`build_model()` successfully done!" mod
     return mod
 end 
 
@@ -785,6 +808,7 @@ function _gauss_line(
     sigma_aa = fwhm_to_sigma(fwhm_tot)
     #= sigma_aa = fwhm_tot / ckms * cen_wave / (2*sqrt(2*log10(2))) =#
     flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm
+    # @debug "Function _line_gauss" sigma_aa cen_wave norm fwhm_tot
     return flux
 end
 #= function _gauss_line( =#
@@ -864,8 +888,9 @@ the rest. The window width is customizable.
 ## Optional input
 - `window_width::Float64`: Half width in km/s of the fitting window around each line.
 """
-function make_lines_mask(mod::Model; window_width_kms::Float64=1000., plot_it::Bool=false, plot_comps::Bool=false)
-    wave = coords(mod.domain)
+function make_lines_mask(mod::Model, dom::Domain; window_width_kms::Float64=1000., plot_it::Bool=false, plot_comps::Bool=false)
+    wave = coords(dom)
+    # wave = coords(mod.domain)
     mask = falses(size(wave))
     for comp in keys(mod)
         if comp == :main
@@ -873,7 +898,7 @@ function make_lines_mask(mod::Model; window_width_kms::Float64=1000., plot_it::B
         end
         cenwave = mod[comp].lab_wave.val * (1 + mod[comp].redshift.val)
         window_width_ang = v_to_deltawl(window_width_kms, cenwave)
-        @debug "Make line mask: " wave window_width_ang
+        # @debug "Make line mask: " wave window_width_ang
         mask[cenwave-window_width_ang .< wave .< cenwave+window_width_ang] .= 1
     end 
     if plot_it == true
@@ -920,7 +945,6 @@ function gauss(λ::Array,  σ::Float64, μ::Float64)
     g = @. 1/σ/sqrt(2π) * exp(-(λ - μ)^2/2/σ^2)
     return g
 end 
-
 
 
 """
@@ -1039,28 +1063,48 @@ function write_spectral_cube_to_fits(filepath::String, spectralcube::NIRSpecCube
 end
 
 
+# """    write_maps_to_fits(filepath, mapsdict)
+# Write a dictionary of line maps as output by the cube fitter function to a multi-
+# extension FITS file.
+# """
+# function write_maps_to_fits(filepath::String, mapsdict::Dict)
+#     f = FITS(filepath, "w")
+#     keylist = sort(collect(keys(mapsdict)))
+#     primhead = mapsdict[:header]; primhead["CONTINUE"] = ""  #push!(primhead, "CONTINUE"="")
+#     sechead = mapsdict[:header]; sechead["CONTINUE"] = ""
+#     write(f, Float64[], header=primhead)
+#     # for k in keys(mapsdict)
+#     for k in keylist
+#         if k in [:header, :primhead, :refline]
+#             continue
+#         end 
+#         write(f, mapsdict[k], header=sechead, name=String(k))
+#         # write(f, mapsdict[k],  name=String(k))
+#     end 
+#     close(f)
+#     return nothing
+# end 
+
 """    write_maps_to_fits(filepath, mapsdict)
 Write a dictionary of line maps as output by the cube fitter function to a multi-
-extension FITS file.
+extension FITS file. NEW VERSION
 """
 function write_maps_to_fits(filepath::String, mapsdict::Dict)
     f = FITS(filepath, "w")
     keylist = sort(collect(keys(mapsdict)))
     primhead = mapsdict[:header]; primhead["CONTINUE"] = ""  #push!(primhead, "CONTINUE"="")
     sechead = mapsdict[:header]; sechead["CONTINUE"] = ""
-    write(f, Float64[], header=primhead)
-    # for k in keys(mapsdict)
+    write(f, collect(0:0.01:1), header=primhead)
     for k in keylist
-        if k in [:header, :primhead, :refline]
+        if k in [:header, :primhead, :refline, :refline_broad]
             continue
         end 
+        @debug "What is this nonsense?" String(k) mapsdict[k]
         write(f, mapsdict[k], header=sechead, name=String(k))
-        # write(f, mapsdict[k],  name=String(k))
     end 
     close(f)
     return nothing
 end 
-
 
 """    quicklook_slice(slicedict, name; what="data", norm="sqrt", colorlimits=nothing)
 Quick and convenient visualization of slices output fromthe `fit_cube()` function.
@@ -1107,11 +1151,13 @@ end
 # Parameters
 - `inmodel::`: GModelFit.Model
 """
-function quicklook_model(inmodel)
-    Plots.plot(inmodel.domain.axis[1], inmodel(), linewidth=2)
-    for b in inmodel.buffers |> keys
-        Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
-    end
+function quicklook_model(inmodel, cube)
+    dom = Domain(cube.wave)
+    Plots.plot(dom.axis[1], inmodel(dom), linewidth=2)
+    # for b in inmodel.buffers |> keys
+    # for b in inmodel.comps|> keys
+    #     Plots.plot!(dom.axis[1], inmodel.comps[b](dom))
+    # end
     Plots.hline!([0], color=:black, linewidth=1,)
 end
 

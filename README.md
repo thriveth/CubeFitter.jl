@@ -29,22 +29,15 @@ etc.; as well as the functions `cont_subt()`, `fit_cube()`, and
 
 ## Usage
 
-### Enabling the package
+### Installing
 
-This package is not yet registered to install (maybe later). To run it now, clone the
-repository to your preferred location; then:
+This package is not yet registered to install through the Julia package manager
+(maybe later). You can install the GitHub `main` branch by running:
 
-```julia
-julia> import Pkg
-julia> Pkg.activate("/path/to/CubeFitter.jl")
-julia> Pkg.instantiate()  # Install dependencies, needs only be done once.
-julia> using CubeFitter
+```julia 
+julia> import Pkg; Pkg.add("https://github.com/thriveth/CubeFitter.jl")
 ```
 
-
-Alternatively, you can enter the `Pkg>` prompt, run `activate /path/to/CubeFitter.jl`,
-then (first time) `instantiate()`. Press Backspace to return to the normal `julia>`
-prompt, and run `using CubeFitter`.
 
 ### Quick example
 
@@ -147,6 +140,24 @@ There really isn't much to look at but here it is:
 ![Screenshot of CubeFitter in action](./Screenshots/CubeFitter.png)
 
 
+# Developing
+
+To hack on your own branch, clone the repository to your preferred location;
+then activate it. It is a good idea to use `Revise.jl` to have changes
+impolemented and precompiled on-the-go: 
+
+```julia
+julia> using Revise   # Optional but a good idea
+julia> import Pkg
+julia> Pkg.activate("/path/to/CubeFitter.jl")
+julia> Pkg.instantiate()  # Install dependencies, needs only be done once.
+julia> using CubeFitter
+```
+
+Alternatively, you can enter the `Pkg>` prompt, run `activate /path/to/CubeFitter.jl`,
+then (first time) `instantiate()`. Press Backspace to return to the normal `julia>`
+prompt, and run `using CubeFitter`.
+
 ## Planned features / whishlist
 
 In order of approximate priority: 
@@ -155,12 +166,32 @@ In order of approximate priority:
 - [x] Make it possible to add a second and perhaps third kinematic component. 
 - [x] Write quicklook-functions allowing to quickly view the fit outputs with minimum
       input. But still be tinker-friendly, don't hide stuff from the user.
-- [ ] Create an interface to fix ratio between lines of doublets with shared
+- [ ] Spectrum extraction and fitting from arbitrary masks, e.g. fragmentation maps.
+- [ ] Implement adaptive binning.
+- [ ] Allow user to fix ratio between lines of doublets with shared
       upper levels.
 - [ ] Create interface to select lines to always fit together (useful for
       blended features).
-- [ ] Test and ensure the `MUSECube` and `MIRICube` structs actually works as advertised
-- [ ] Allow for measuring flux or upper limits in lines that are currently excluded as
-      having too low S/N ratio.
+- [ ] Test and ensure the `MUSECube` and `MIRICube` structs actually work as advertised
+- [ ] Allow to measure flux/upper limits numerically when S/N threshold is not met.
 - [ ] Add support for more instruments. Suggestions welcome (especially if accompanied
       with a suitable test dataset).
+
+
+# Other projects
+
+- [`Loki.jl`](https://github.com/Michael-Reefe/Loki.jl) is another (and way
+  more advanced and ambitious) Julia package for IFU data than this one. Loki
+  seems to implement much more astrophysics and much more complex models than
+  the simple non-parametric continuum subtraction and Gaussian peaks of
+  CubeFitter. On the other hand, with the higher specialization also comes a
+  more limited scope in terms of which targets you could apply it on; and I
+  find that CubeFitter is simpler to use for its different scope. CubeFitter
+  also is written in pure Julia and does not depend on any Python packages
+  through `PyCall`. 
+
+  If you want to implement physical per-spaxel dust models, PAH features and
+  stellar kinematics in your model, then Loki is probably what you want. If on
+  the other hand, you are simply looking for a 1- or 2-Gaussian component model
+  of your lines with shared kinematics by default, CubeFitter might be right
+  for you. 

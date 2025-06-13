@@ -115,8 +115,16 @@ otherwise saved in the same data format as the final pipeline products of a give
 instrument; this can be done using the `cont_subt()` function as described above. Using
 JWST/NIRSpec as an example, this means that the data cubes should be saved as a FITS file
 with an empty primary HDU, and the flux and error cubes saved as the first and second
-extensions, respectively. At the moment, this requirement is hardcoded, and any other
-formats will either throw an error or, at worst, yield wrong and meaningless results.
+extensions, respectively. 
+
+When instantiating the cube, it is possible to pass the data and error
+extnesion indices or names as keyword arguments. Examples: 
+
+```julia
+julia> thecube = NIRSpecCube("/path/to/fits/file.fits", data_ext=0, err_ext=3)
+julia> thecube = NIRSpecCube("/path/to/fits/file.fits", data_ext="SCI", err_ext="ERR")
+```
+
 
 ### Quicklook functions
 

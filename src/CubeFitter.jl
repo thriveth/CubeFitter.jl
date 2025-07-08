@@ -28,7 +28,7 @@ import Plots
 using Term.Progress
 include("./SpecHelpers.jl")
 using .SpecHelpers
-export load_neblines, load_fits_cube
+export load_neblines, load_fits_cube, load_slices_dict
 
 # Physical constants
 const ckms = SpeedOfLightInVacuum |> u"km/s"
@@ -1044,6 +1044,9 @@ function fill_in_fit_values!(
     end
 end
 
+###=============================================================================
+#    File I/O functions
+
 
 """    write_spectral_cube_to_fits(filepath, spectralcube)
 Write a subtype of AbstractSpectralCube to a FITS file.
@@ -1105,6 +1108,23 @@ function write_maps_to_fits(filepath::String, mapsdict::Dict)
     close(f)
     return nothing
 end 
+
+function load_slices_dict(filepath::String)
+  f = FITS(filepath, "r", extendedparser=true)
+  outdict = Dict()
+  for (i, hdu) in enumerate(f)
+    try
+      extname = read_key(hdu, "EXTNAME")[1]
+      println(i-1, " ", Symbol(extname))
+      outdict[Symbol(extname)] = read(hdu)
+    catch
+      outdict[:PRIMARY] = read_header(hdu)
+      println("No EXT name for ", i-1)
+    end
+    # println(i)
+  end
+  return outdict
+end
 
 """    quicklook_slice(slicedict, name; what="data", norm="sqrt", colorlimits=nothing)
 Quick and convenient visualization of slices output fromthe `fit_cube()` function.

@@ -13,7 +13,8 @@ using Base.Threads, Printf, Logging, LoggingExtras
 # Handle NaN's more gracefully than standard Julia
 using NaNStatistics
 # Physical units and unit conversion, and uncertainties
-using Unitful, UnitfulAstro, UnitfulEquivalences, Measurements, PhysicalConstants.CODATA2018
+using Unitful, UnitfulAstro, UnitfulEquivalences, Measurements
+using PhysicalConstants.CODATA2018
 # Data formats, table, the works
 using FITSIO, DataFrames, DataStructures, CSV
 # Interpolation, modeling and fitting
@@ -36,6 +37,7 @@ const caps = SpeedOfLightInVacuum |> u"Å/s"
 datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
 include("./ContSubt.jl")
 export cont_subt
+
 
 # Custom Gaussian component
 # include("./GaussianComponent.jl")
@@ -1186,20 +1188,20 @@ function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits
 end 
 
 
-"""    quicklook_fit_result_dict(indict)
-# Parameters
-- `indict::Dict`: The output dictionary of `fit_spectrum_from_subcube`
-"""
-function quicklook_fit_result_dict(indict)
-    Plots.plot(indict[:wave], indict[:spec], color=:gray)
-    Plots.plot!(indict[:wave], indict[:errs])
-    inmodel = indict[:results]
-    Plots.plot!(inmodel.domain.axis[1], inmodel(), linewidth=2)
-    for b in inmodel.buffers |> keys
-        Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
-    end
-    Plots.hline!([0], color=:black, linewidth=1,)
-end
+# """    quicklook_fit_result_dict(indict)
+# # Parameters
+# - `indict::Dict`: The output dictionary of `fit_spectrum_from_subcube`
+# """
+# function quicklook_fit_result_dict(indict)
+#     Plots.plot(indict[:wave], indict[:spec], color=:gray)
+#     Plots.plot!(indict[:wave], indict[:errs])
+#     inmodel = indict[:results]
+#     Plots.plot!(inmodel.domain.axis[1], inmodel(), linewidth=2)
+#     for b in inmodel.buffers |> keys
+#         Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
+#     end
+#     Plots.hline!([0], color=:black, linewidth=1,)
+# end
 
 
 """    quicklook_model(inmodel)
@@ -1214,6 +1216,16 @@ function quicklook_model(inmodel, cube)
     #     Plots.plot!(dom.axis[1], inmodel.comps[b](dom))
     # end
     Plots.hline!([0], color=:black, linewidth=1,)
+end
+
+
+###=============================================================================
+#   Placeholder functions for extensions
+#
+""" Please load the `VoronoiBinning` package to activate this functionality.
+"""
+function voronoi_bin_slice(Any)
+  return nothing
 end
 
 

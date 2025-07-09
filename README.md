@@ -2,6 +2,7 @@
 
 [![Build Status](https://github.com/thriveth/CubeFitter.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/thriveth/CubeFitter.jl/actions/workflows/CI.yml?query=branch%3Amain)
 
+
 ## Introduction
 
 A package for automatically fitting emission lines in astronomical spectral cubes.
@@ -70,6 +71,10 @@ given (_x, y_) range, runs the fit, and return a dictionary of the fit results a
 statistics, along with the extracted spectrum, errors, and wavelength range for
 convenience. See the function docstring to learn more.
 
+In addition to the line fits, the routine also measures the flux with standard
+errors by numerical integration in each spaxel; this is saved together with the
+flux from fitting in the output. 
+
 ### Data format
 
 The function `fit_cube()` expects the data to already be continuum subtracted, but
@@ -80,12 +85,36 @@ with an empty primary HDU, and the flux and error cubes saved as the first and s
 extensions, respectively. 
 
 When instantiating the cube, it is possible to pass the data and error
-extnesion indices or names as keyword arguments. Examples: 
+extension indices or names as keyword arguments. Examples: 
 
 ```julia
 julia> thecube = NIRSpecCube("/path/to/fits/file.fits", data_ext=0, err_ext=3)
 julia> thecube = NIRSpecCube("/path/to/fits/file.fits", data_ext="SCI", err_ext="ERR")
 ```
+
+
+### Output format
+
+The fitting function (`fit_cube`) returns a dictionary of maps plus a few other
+properties. Those maps are the *redshift* (common to all lines), the *fwhm*
+(also common to all lines), as well as an entry for each line measured. These
+entries each contain an $N \times M \times 5$ array, where $N \times M$ are the
+spatial dimensions of the cube, and each consists of five layers: 
+
+1. Measured line flux in each spaxel from line fitting.
+2. Standard errors of layer 1. 
+3. S/N from line fitting (mainly for convenience), 
+4. Numerical flux from each line, and 
+5. Standard errors of layer 4. 
+
+
+This output dictionary can be saved to a FITS file using the function
+`write_maps_to_fits`, which writes each of the map entries to a separate FITS
+extension HDU named for the dictionary key, and containing the output array in
+its data part. The output data file follows the convention of having the first,
+primary, extension be empty of data and containing the most elaborate header
+(which at this point is basically just a copy of the header of the input
+datacube). 
 
 
 ### Specify lines to fit
@@ -151,7 +180,7 @@ There really isn't much to look at but here it is:
 ![Screenshot of CubeFitter in action](./Screenshots/CubeFitter.png)
 
 
-# Developing
+# Development
 
 To hack on your own branch, clone the repository to your preferred location;
 then activate it. It is a good idea to use `Revise.jl` to have changes
@@ -169,24 +198,29 @@ Alternatively, you can enter the `Pkg>` prompt, run `activate /path/to/CubeFitte
 then (first time) `instantiate()`. Press Backspace to return to the normal `julia>`
 prompt, and run `using CubeFitter`.
 
+
 ## Planned features / whishlist
 
 In order of approximate priority: 
 
 - [x] Include continuum subtraction functionality in the package.
 - [x] Make it possible to add a second and perhaps third kinematic component. 
-- [x] Write quicklook-functions allowing to quickly view the fit outputs with minimum
-      input. But still be tinker-friendly, don't hide stuff from the user.
-- [ ] Spectrum extraction and fitting from arbitrary masks, e.g. fragmentation maps.
+- [x] Write quicklook-functions allowing to quickly view the fit outputs with
+  minimum input. But still be tinker-friendly, don't hide stuff from the user.
+- [x] Allow to measure flux/upper limits numerically when S/N threshold is not
+  met (now does this all the time, whether S/N threshold is met or not - it is
+  computationally cheap and simpler this way. .
+- [ ] Spectrum extraction and fitting from arbitrary masks, e.g. fragmentation
+  maps.
 - [ ] Implement adaptive binning.
-- [ ] Allow user to fix ratio between lines of doublets with shared
-      upper levels.
+- [ ] Allow user to fix ratio between lines of doublets with shared upper
+  levels.
 - [ ] Create interface to select lines to always fit together (useful for
-      blended features).
-- [ ] Test and ensure the `MUSECube` and `MIRICube` structs actually work as advertised
-- [ ] Allow to measure flux/upper limits numerically when S/N threshold is not met.
-- [ ] Add support for more instruments. Suggestions welcome (especially if accompanied
-      with a suitable test dataset).
+  blended features).
+- [ ] Test and ensure the `MUSECube` and `MIRICube` structs actually work as
+  advertised
+- [ ] Add support for more instruments. Suggestions welcome (especially if
+  accompanied with a suitable test dataset).
 
 
 # Other projects

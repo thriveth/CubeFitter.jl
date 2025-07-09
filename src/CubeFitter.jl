@@ -6,7 +6,7 @@ export make_spectrum_from_cutout, make_lines_mask, toggle_fnu_flam
 export write_maps_to_fits, write_spectral_cube_to_fits, quickload_neblines
 export quicklook_slice, quicklook_model, quicklook_fit_result_dict
 ###============================================================###
-using Measurements: result
+using Measurements: result, value, uncertainty
 # Basic computing functionality, misc.
 using Base: NullLogger
 using Base.Threads, Printf, Logging, LoggingExtras
@@ -547,15 +547,24 @@ function makeresultdict(cube; broad_component=false, lines_select=nothing)
 end
 
 
-"""    fit_cube(cube)
+"""    fit_cube(cube; broad_component=false, lines_selection=nothing, kinematics_from_lines=nothing, min_snr=1.0)
 Fit the entire cube spaxel-by-spaxel.
 
 This is a convenience function to perform that one action we want to perform 90% of the time.
-It does not offer any settings or tweaks, use the function `fit_spectrum_from_subcube` for
-these cases. This is basically just a wrapper around that one anyway, to save the typing of the
-most likely standard settings.
-The only one thing that is settable here is whether to include a second, broader kinematic
-component in the model. 
+Still, there are a few options to tweak:
+
+# Arguments
+Required arguments:
+- `cube::AbstractSpectralCube`: The SpectralCube object to fit.
+Optional arguments:
+- `broad_component::Bool`: Wether or not to include an second kinematic component in the fit. 
+- `line_selection::List{Symbol}`: A list of lines to fit. Defaults to all lines in the loaded line list which fall 
+  within the wavelength range of the dataset.
+- `kinematics_from_lines::List{Symbol}`: List of names of lines on which to base the kinematc fits. Other lines will be
+  fit with locked kinematics, assuming they share the same properties as the ones in this list, allowing only the flux to
+  vary.
+- `min_snr::Number`: Where the numerically estimated S/N ratio per spaxel is below this value, the line will not be included 
+  in the fit for this line, and the value set to NaN.
 """
 function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1.0, kinematics_from_lines=nothing)
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
@@ -564,12 +573,9 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
     @track for x in 1:xsize
         for y in 1:ysize
             print("Fitting col. $x, row $y \r")
-            # numnan = size((collect(isnan.(cube.fluxcube[x, y, :]))))
             numnan = count(isnan.(cube.fluxcube[x, y, :]))
             nanratio = numnan/length(cube.wave)
-            # @debug "Number of nans in x=$x, y=$y: " numnan size(cube.fluxcube) nanratio
             if nanratio > 0.5
-                #@warn "Pixel ($x, $y) has > 50% NaN; moving on"
                 continue
             end
             if kinematics_from_lines isa Nothing
@@ -582,11 +588,9 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
             @debug "What's a fitdict anyway?" fitdict typeof(fitdict)
             if !isa(fitdict, Dict)
                 @debug "Fitdict $x, $y was not a dict!"
-                # break
                 continue
             end
             linesdict = Dict(l => fitdict[:results][l] for l in fitdict[:results] |> keys if l != :main)
-            # fitdict[:linesdict] = linesdict
             if !(kinematics_from_lines isa Nothing)
                 minwave, maxwave = (cube.wave |> minimum, cube.wave |> maximum) ./ (1 + cube.z_init)
                 if line_selection isa Nothing
@@ -613,9 +617,10 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
         end 
     end 
     mom0, mom1, mom2 = calculate_moments(cube)
-    slices_dict[:mom0] = mom0
-    slices_dict[:mom1] = mom1
-    slices_dict[:mom2] = mom2
+    # Moments come with both signal and noise now
+    slices_dict[:mom0] = stack([value.(mom0), uncertainty.(mom0)], dims=3)
+    slices_dict[:mom1] = stack([value.(mom1), uncertainty.(mom1)], dims=3)
+    slices_dict[:mom2] = stack([value.(mom2), uncertainty.(mom2)], dims=3)
     # Remove empty slices
     for s in slices_dict |> keys
         if !(slices_dict[s] isa Array); continue; end
@@ -843,11 +848,14 @@ function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
     if isa(refline, Nothing)
         refline = cube.ref_line
     end 
-    λ_obs = cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1] * (1 + cube.z_init)
-    window_ang = v_to_deltawl(window_kms, λ_obs)
-    idx = λ_obs - window_ang .< cube.wave .< λ_obs + window_ang
-    waves, flux = cube.wave[idx], cube.fluxcube[:,:,idx]
-    println(size(flux))
+    lam_rest = cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1]
+    lam_obs = lam_rest * (1 + cube.z_init)  # cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1] * (1 + cube.z_init)
+    println("$lam_rest, $lam_obs")
+    window_ang = v_to_deltawl(window_kms/2, lam_obs)
+    idx = lam_obs - window_ang .< cube.wave .< lam_obs + window_ang
+    # waves, flux = cube.wave[idx]./(1 + cube.z_init), cube.fluxcube[:,:,idx]
+    waves, flux = cube.wave[idx], cube.fluxcube[:,:,idx] .± cube.errscube[:,:,idx]
+    println("Calculate moments: Size of flux chunk is: ", size(flux))
     # Make sure things are well formatted now before they get passed along.
     @assert size(waves)[1] == size(flux)[3]
     # Empty arrays to fill in:
@@ -856,27 +864,49 @@ function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
     mom1 = similar(flux[:, :, 1])
     mom2 = similar(flux[:, :, 1])
     ncols, nrows = size(flux)
-    @track for i in 1:ncols
+    # println("$nrows, $ncols")
+    # println("$(waves |> minimum), $(waves |> maximum)")
+    for i in 1:ncols
+    # @track for i in 1:ncols
         for j in 1:nrows
+            # println("$i, $j")
             theflux = flux[i, j, :]  # Just for convenience
-            mom0a = NumericalIntegration.integrate(theflux, waves)
-            @debug "Moment0: " mom0a
-            if mom0a <= 0; mom0a = NaN; end
-            mom0[i, j] = mom0a
+            # println("$(theflux |> minimum), $(theflux |> maximum)")
+            # mom0a = NumericalIntegration.integrate(theflux, waves)
+            deltalam = waves[2:end] .- waves[1:end-1] 
+            append!(deltalam, deltalam[end])
+            mom0b = (deltalam .* theflux) |> nansum
+            # mom0[i, j] = mom0a
+            mom0[i, j] = abs(mom0b)
             mom1[i, j] = nansum(waves .* theflux) ./ nansum(theflux)
+            # mom1[i, j] = nansum(waves .* theflux .* deltalam) #./ nansum(theflux)
+            # Plots.plot!(waves, theflux)
+            #
             @debug i, j theflux mom0[i, j] mom1[i, j]
-            if isnan.([mom0[i, j], mom1[i, j]]) |> any
-                mom2[i, j] = NaN
-            else 
-    # mom2 = np.sqrt(np.nansum((wave - mom1)**2 * flux, axis=0) / np.absolute(np.nansum(flux, axis=0)))
-                mom2[i, j] = sqrt(abs.(
-                sum((waves .- mom1[i, j]).^2 .* theflux))
-                / abs.(nansum(theflux)))# - λ_obs
-            end 
+            mom2[i, j] = sqrt(
+                  abs.(nansum((waves .- mom1[i, j]).^2 .* theflux)) 
+                  / abs.(nansum(theflux))
+            )
         end
     end 
     return mom0, mom1, mom2
 end 
+
+
+function moments(wave::AbstractFloat, flux::AbstractFloat, err::AbstractFloat)
+    flux = flux .± err
+    mom0, mom1, mom2 = moments(wave, flux)
+    return mom0, mom2, mom3
+end
+
+function moments(wave::AbstractFloat, flux::Measurement{AbstractFloat})
+    flux = abs.(flux)
+    deltawave = wave[2:end] - wave[1:end-1] 
+    append!(deltawave, deltawave[end])
+    mom0 = (deltawave .* flux) |> nansum
+    mom1 = ((waves .* deltawave .* flux)  |> nansum) ./ (flux |> nansum)
+    mom2 = sqrt(nansum((waves .- mom1).^2 .* flux) / nansum(flux))# |> nansum
+end
 
 
 
@@ -947,8 +977,8 @@ function gauss(λ::Array,  σ::Float64, μ::Float64)
 end 
 
 
-"""
-    estimate_line_snr(wave, flux; err=nothing)
+"""    estimate_line_snr(wave, flux; err=nothing)
+
 Quick and coarse estimate of the integrated flux within a wavelength window
 without actual fitting.
 """
@@ -991,18 +1021,6 @@ function get_resolving_power_muse(;order=3::Int)
 end
 
 
-#= """    load_neblines(infile) =#
-#= # Arguments =#
-#= - `filepath::String`: The file to use. Must be a whitespace separated file, =#
-#=   containing at least the columns 'name', 'lamvac', 'lamair', and 'foverha'. =#
-#= """ =#
-#= function load_neblines(infile="./static_data/neblines.dat") =#
-#=     lines = CSV.File(infile, delim=" ", ignorerepeated=true, comment="#") |> DataFrame =#
-#=     select!(lines, [:name, :lamvac, :lamair, :foverha]) =#
-#=     #@info "Loaded list of nebular lines" =#
-#=     return lines =#
-#= end  =#
-
 
 """    fill_in_fit_values(dict::Dict, fitresults::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)
 """
@@ -1037,16 +1055,19 @@ function fill_in_fit_values!(
         component = fitdict[:linesdict][l]
         normu = component[:norm].val ± component[:norm].unc
         fluxu = sqrt(2π) * sigmau * normu
+        # println("$pix_coords.val, $fluxu.val, $normu.val, $(fluxu.val/normu.val)")
         # fluxu = normu
-        dict[l][row, column, 1] = fluxu.val
-        dict[l][row, column, 2] = fluxu.err
-        dict[l][row, column, 3] = fluxu.val/fluxu.err
+        # dict[l][row, column, 1] = fluxu.val
+        # dict[l][row, column, 2] = fluxu.err
+        # dict[l][row, column, 3] = fluxu.val/fluxu.err
+        dict[l][row, column, 1] = normu.val
+        dict[l][row, column, 2] = normu.err
+        dict[l][row, column, 3] = normu.val/normu.err
     end
 end
 
 ###=============================================================================
 #    File I/O functions
-
 
 """    write_spectral_cube_to_fits(filepath, spectralcube)
 Write a subtype of AbstractSpectralCube to a FITS file.

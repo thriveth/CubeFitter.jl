@@ -525,7 +525,7 @@ function makeresultdict(cube; broad_component=false, lines_select=nothing)
         end 
         comp = Symbol(scomp)
         if comp == :main; continue; end
-        slice = zeros(xsize, ysize, 3) .* NaN
+        slice = zeros(xsize, ysize, 5) .* NaN
         slices_dict[comp] = slice
         if broad_component
            slices_dict[Symbol(String(comp) * "_broad")] = copy(slice)
@@ -569,6 +569,13 @@ Optional arguments:
 function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1.0, kinematics_from_lines=nothing)
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
     slices_dict = makeresultdict(cube, broad_component=broad_component)
+
+    if kinematics_from_lines isa Nothing
+        model_lines = line_selection
+    else
+        model_lines = kinematics_from_lines
+    end
+
     @debug "Made slices_dict"
     @track for x in 1:xsize
         for y in 1:ysize
@@ -578,11 +585,11 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
             if nanratio > 0.5
                 continue
             end
-            if kinematics_from_lines isa Nothing
-                model_lines = line_selection
-            else
-                model_lines = kinematics_from_lines
-            end
+            # if kinematics_from_lines isa Nothing
+            #     model_lines = line_selection
+            # else
+            #     model_lines = kinematics_from_lines
+            # end
             fitdict = fit_spectrum_from_subcube(
                 cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=model_lines)
             @debug "What's a fitdict anyway?" fitdict typeof(fitdict)
@@ -627,7 +634,13 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
         slice = slices_dict[s][:,:,1]
         if count(isnan.(slice)) == length(slice)
             delete!(slices_dict, s)
+            continue
         end
+        if !(String(s) in cube.linelist[!, "name"]); continue; end
+        m0, m1, m2 = calculate_moments(cube, refline=s)
+        m0v, m0e = m0 .|> value, m0 .|> uncertainty
+        m0s = stack([m0v,m0e], dims=3)
+        slices_dict[s][:,:,4:5] = m0s
     end
     return slices_dict
 end 
@@ -848,6 +861,7 @@ function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
     if isa(refline, Nothing)
         refline = cube.ref_line
     end 
+    println("Reference line: $refline")
     lam_rest = cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1]
     lam_obs = lam_rest * (1 + cube.z_init)  # cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1] * (1 + cube.z_init)
     println("$lam_rest, $lam_obs")

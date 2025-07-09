@@ -1169,15 +1169,15 @@ Quick and convenient visualization of slices output fromthe `fit_cube()` functio
 # Optional parameters
 - `norm`: Function to normalize/color scale the data. Must be callable with a single argument.
   E.g., `identity`, `sqrt`, `log10`, or similar. 
-- `what::Symbol`: One of wither `:data`, `:errs`, or `:snr`
+- `what::Symbol`: One of wither `:data`, `:errs`, `:snr`, `:numdata`, or `:numerrs`.
 - `cmap::Symbol`: The colormap to use with `Plots.heatmap()`.
 - `colorlimits::Tuple`: Tuple of (min, max) color cut values.
 """
 function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits=nothing, cmap=:cubehelix)
     theslice = slicedict[Symbol(name)]
-    layers = Dict(:data => 1, :errs => 2, :snr => 3)
-    thelayer = layers[Symbol(what)]
-    data = transpose(theslice[:,:,thelayer])
+    layers = Dict(:data => 1, :errs => 2, :snr => 3, :numdata => 4, :numerrs => 5)
+    # thelayer = layers[Symbol(what)]
+    data = transpose(theslice[:,:,layers[Symbol(what)]])
     if colorlimits isa Nothing
         colorlimits = (nanpctile(data, 2), nanpctile(data, 99))
     end

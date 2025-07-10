@@ -1188,20 +1188,20 @@ function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits
 end 
 
 
-# """    quicklook_fit_result_dict(indict)
-# # Parameters
-# - `indict::Dict`: The output dictionary of `fit_spectrum_from_subcube`
-# """
-# function quicklook_fit_result_dict(indict)
-#     Plots.plot(indict[:wave], indict[:spec], color=:gray)
-#     Plots.plot!(indict[:wave], indict[:errs])
-#     inmodel = indict[:results]
-#     Plots.plot!(inmodel.domain.axis[1], inmodel(), linewidth=2)
-#     for b in inmodel.buffers |> keys
-#         Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
-#     end
-#     Plots.hline!([0], color=:black, linewidth=1,)
-# end
+"""    quicklook_fit_result_dict(indict)
+# Parameters
+- `indict::Dict`: The output dictionary of `fit_spectrum_from_subcube`
+"""
+function quicklook_fit_result_dict(indict)
+    Plots.plot(indict[:wave], indict[:spec], color=:gray)
+    Plots.plot!(indict[:wave], indict[:errs])
+    inmodel = indict[:results]
+    Plots.plot!(inmodel.domain.axis[1], inmodel(), linewidth=2)
+    for b in inmodel.buffers |> keys
+        Plots.plot!(inmodel.domain.axis[1], inmodel.buffers[b])
+    end
+    Plots.hline!([0], color=:black, linewidth=1,)
+end
 
 
 """    quicklook_model(inmodel)
@@ -1220,6 +1220,21 @@ end
 
 
 ###=============================================================================
+#   Fragmentation map and Voronoi binning related helper functions
+#
+function mean_by_fragmap(data, fragmap; errs=nothing)
+    if !(errs isa Nothing)
+        data = data .± errs
+    end
+    outmap = similar(data)
+    for i in (fragmap |> unique)
+        outmap[fragmap.==i] .= nanmean(data[fragmap.==i])
+    end
+    return outmap
+end
+
+
+###=============================================================================
 #   Placeholder functions for extensions
 #
 """ Please load the `VoronoiBinning` package to activate this functionality.
@@ -1228,5 +1243,6 @@ function voronoi_bin_slice(Any)
   return nothing
 end
 
+export voronoi_bin_slice, mean_by_fragmap
 
 end  # End module

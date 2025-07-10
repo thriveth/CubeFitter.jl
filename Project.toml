@@ -1,7 +1,7 @@
 name = "CubeFitter"
 uuid = "dc4e8925-179f-4201-9ae1-2609c7232911"
 authors = ["T. Emil Rivera-Thorsen <trive@astro.su.se>"]
-version = "0.2.2"
+version = "0.2.3"
 
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
@@ -26,18 +26,16 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 UnitfulAstro = "6112ee07-acf9-5e0f-b108-d242c714bf9f"
 UnitfulEquivalences = "da9c4bc3-91c8-4f02-8a40-6b990d2a7e0c"
-# VoronoiBinning = "0480b74a-4474-4b41-b184-abfd81603c41"
+
+[weakdeps]
+PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
+VoronoiBinning = "0480b74a-4474-4b41-b184-abfd81603c41"
+
+[extensions]
+UseVoronoiBin = "VoronoiBinning"
 
 [compat]
 GModelFit = ">= 0.5.2"
 PythonPlot = "1.0.6"
 VoronoiBinning = "1.0.1"
 julia = ">= 1.10"
-
-[weakdeps]
-VoronoiBinning = "0480b74a-4474-4b41-b184-abfd81603c41"
-PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
-
-[extensions]
-UseVoronoiBin = "VoronoiBinning" 
-

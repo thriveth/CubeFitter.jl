@@ -16,12 +16,12 @@ most other instruments should be quite easy to add as well.
 
 ## What does it do (and how)?
 
-This code contains three main components (which may get separated into
-their own packages later): 
+This package contains of a few main components of functionality, plus some plumbing to make them play nice together. 
 
 - A family of `SpectralCube` types which handle the data and metadata.
 - A continuum subtraction function (see description below)
-- The functionality for fitting emission lines.
+- The functionality for fitting emission lines, either -per-spaxel, or for a number of arbitrary spatial bins/fragments.
+- A wrapper around the `VoronoiBinning` package, which is an optional dependency. 
 
 The workhorses of this package are the various types `NIRSpecCube`, `MUSECube`,
 etc.; as well as the functions `cont_subt()`, `fit_cube()`, and
@@ -55,34 +55,44 @@ julia> write_maps_to_fits("/desired/path/to/output/file.fits", out)
 It is of course possible to just load the continuum subtracted cube and not go
 through that step again. 
 
-The function `fit_cube()` will return a dictionary of $N\times M \times 3$ arrays, one for
-each fitted line, as well as one for the 0th to 2nd moment, the spaxel-wise redshift, and
-line width. Each such array will have the measured values as the first slice, the
-parameter error in the second slice, and the fit statistics in the last. Each of these
-slices will be saved as an individual HDU in the output FITS file.
+The function `fit_cube()` will return a dictionary of $N\times M \times 5$
+arrays, one for each fitted line, as well as one for the 0th to 2nd moment, the
+spaxel-wise redshift, the line FWHM, and the fit statistics. Each such array
+will have the measured values as the first slice, the parameter error in the
+second slice, and S/N in the third. Fourth and fifth slice in this array
+contain the numerically coadded line flux and its associated standard error.
+Each of these entries will be saved as an individual HDU in the output FITS
+file.
 
-The function `fit_cube` is mainly a convenience function enabling one to cycle through every
-spaxel in the cube, and running the fits with default settings. One can also use the
-function `fit_spectrum_from_subcube()` directly. This function allows to extract a
-spectrum from the cube based on an x- and y range passed to it (this must always be a
-range; if only one spaxel is wanted, give the range for the spaxel (_i_, _j_) as
-`xrange=i:i, yrange=j:j`). The function extracts a simple, un-weighted spectrum over the
-given (_x, y_) range, runs the fit, and return a dictionary of the fit results and
-statistics, along with the extracted spectrum, errors, and wavelength range for
-convenience. See the function docstring to learn more.
+The function `fit_cube` is mainly a convenience function enabling one to cycle
+through either individual spaxels or a map of numbered bins, and extracting and
+fitting a spectrum for every mask or spaxel, and filling in best-fit fitted
+values of line fluxes and kinematic parameters and their associated standard
+errors and fit statistcs into the corresponding spaxel or fragment.
 
 In addition to the line fits, the routine also measures the flux with standard
 errors by numerical integration in each spaxel; this is saved together with the
 flux from fitting in the output. 
 
+One can also use the function `fit_spectrum_from_subcube()` directly. This
+function allows to extract a spectrum from the cube based on an x- and y range
+passed to it (this must always be a range; if only one spaxel is wanted, give
+the range for the spaxel (_i_, _j_) as `xrange=i:i, yrange=j:j`). The function
+extracts a simple, un-weighted spectrum over the given (_x, y_) range, runs the
+fit, and return a dictionary of the fit results and statistics, along with the
+extracted spectrum, errors, and wavelength range for convenience.
+Alternatively, one can pass a mask (`true` for included spaxels, `false` for
+excluded ones. See the function docstring to learn more.
+
+
 ### Data format
 
-The function `fit_cube()` expects the data to already be continuum subtracted, but
-otherwise saved in the same data format as the final pipeline products of a given
-instrument; this can be done using the `cont_subt()` function as described above. Using
-JWST/NIRSpec as an example, this means that the data cubes should be saved as a FITS file
-with an empty primary HDU, and the flux and error cubes saved as the first and second
-extensions, respectively. 
+The function `fit_cube()` expects the data to already be continuum subtracted,
+but otherwise saved in the same data format as the final pipeline products of a
+given instrument; this can be done using the `cont_subt()` function as
+described above. Using JWST/NIRSpec as an example, this means that the data
+cubes should be saved as a FITS file with an empty primary HDU, and the flux
+and error cubes saved as the first and second extensions, respectively. 
 
 When instantiating the cube, it is possible to pass the data and error
 extension indices or names as keyword arguments. Examples: 
@@ -106,7 +116,6 @@ spatial dimensions of the cube, and each consists of five layers:
 3. S/N from line fitting (mainly for convenience), 
 4. Numerical flux from each line, and 
 5. Standard errors of layer 4. 
-
 
 This output dictionary can be saved to a FITS file using the function
 `write_maps_to_fits`, which writes each of the map entries to a separate FITS
@@ -172,6 +181,40 @@ documentation. The functions are:
 - **`quicklook_model`**: Previews a model generated by the function
   `build_model`. See the docstrings of these functions for directions.
 
+
+### Fitting from fragmentation map
+
+As mentioned above, `fit_cube` and `fit_spectrum_from_subcube` can take an
+arbitrary (set of) mask(s) as input, for which to extract spectrum and perform
+fitting. This set of masks can be a fragmentation map, a map of Voronoi bins
+(see under "extras" below), or created in any arbitrary way.
+
+#### Map/mask format
+
+- **`fit_cube`**: A 2D array of **integers** of the same dimensions as the
+  spatial dimensions of the data cube in question. Every number is interpreted
+  as a separate fragment. 
+- **`fit_spectrum_from_subcube`**: A 2D BitArray (created as an array of type
+  Bool), where excluded spaxels get the value `false`/0, and included spaxels are
+  `true`/1. 
+
+
+### Extras
+
+#### Voronoi binning 
+
+If the package
+![VoronoiBinning](https://github.com/Michael-Reefe/VoronoiBinning.jl) is
+installed and loaded, it activates the CubeFitter function `voronoi_bin_slice`. 
+
+This function takes as argument a fit result dictionary (output from
+`fit_cube`) and a slice key (any slice that contains both signal and noise is
+valid), a target S/N value, and a few other arguments (see the docstring for
+more information). The function outputs the resulting 2D map of bins as well as
+the binned value of the selected quantity to bin for. The latter comes as the
+type `Matrix{Measurement{Float64}}`, use the package `Measurements` and its
+functions `value` and `uncertainty` to separate out these two quantities as
+individual arrays. 
 
 ## Screenshots
 

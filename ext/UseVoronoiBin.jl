@@ -48,37 +48,35 @@ Keyword arguments passed to `voronoi2Dbinning`
   (doesn't work for me but keeping it in anyway. Requires PyPlot installed).
 """
 function CubeFitter.voronoi_bin_slice(
-    slice_dict, key; 
-    target_sn=10., #min_sn=1., 
-    bin_strategy=WeightedVoronoi, verbose=false, plot=false,
-    return_all_vorbin_output=false,
-    which_flux=:fit)
-    slice = slice_dict[key]
-    s, n = prepare_slice(slice, which_flux=which_flux)
-    println("Size of slice: $(size(s))")
-    S = Iterators.flatten(s) |> collect
-    N = Iterators.flatten(n) |> collect
-    println("Voronoibinnerfunc: $(filter(N -> N .< 0, N))")
-    x = Iterators.cycle(1:size(s)[1], size(s)[2]) |> collect
-    xy = reshape(x, size(s))
-    y = Iterators.flatten(xy') |> collect
-    outs = voronoi2Dbinning(
-        x, y, S, N, target_sn,
-        verbose=false, 
-        plot=false,
-    )
-    binmap =  reshape(outs[1], size(s))
-    datamap = mean_by_fragmap(s, binmap, errs=n)
-    if return_all_vorbin_output
-        return binmap, datamap, outs 
-    else 
-        return binmap, datamap
-    end
+  slice_dict, key; 
+  target_sn=10., #min_sn=1., 
+  bin_strategy=WeightedVoronoi, verbose=false, plot=false,
+  return_all_vorbin_output=false,
+  which_flux=:fit)
+  slice = slice_dict[key]
+  s, n = prepare_slice(slice, which_flux=which_flux)
+  println("Size of slice: $(size(s))")
+  S = Iterators.flatten(s) |> collect
+  N = Iterators.flatten(n) |> collect
+  println("Voronoibinnerfunc: $(filter(N -> N .< 0, N))")
+  x = Iterators.cycle(1:size(s)[1], size(s)[2]) |> collect
+  xy = reshape(x, size(s))
+  y = Iterators.flatten(xy') |> collect
+  outs = voronoi2Dbinning(
+    x, y, S, N, target_sn,
+    verbose=false, 
+    plot=false,
+  )
+  binmap =  reshape(outs[1], size(s))
+  datamap = mean_by_fragmap(s, binmap, errs=n)
+  if return_all_vorbin_output
+      return binmap, datamap, outs 
+  else 
+      return binmap, datamap
+  end
 end
 
 ###=============================================================================
 #   TODO: Find a way to generate a random colormap to display the fragmap
-#   TODO: Find a way to better handle NaN's such that we can also use the fitted 
-#         values. 
 ###=============================================================================
 end

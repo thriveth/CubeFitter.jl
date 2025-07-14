@@ -38,11 +38,9 @@ datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
 include("./ContSubt.jl")
 export cont_subt
 
-
 # Custom Gaussian component
 # include("./GaussianComponent.jl")
 # export EmissionGauss, gauss 
-
 
 """    quickload_neblines()
 Load the default spectral line table.
@@ -229,9 +227,10 @@ end
 """    estimate_redshift_reference_line_flux(cube; xrange=nothing, yrange=nothing)
 Estimate the redshift and line flux of a line given data and line ID.
 """
-function estimate_redshift_reference_line_flux(spec_cube; xrange=nothing, yrange=nothing)
+function estimate_redshift_reference_line_flux(spec_cube; xrange=nothing, yrange=nothing, mask=nothing)
     wave = spec_cube.wave
-    spec_guess, _ = make_spectrum_from_cutout(spec_cube, xrange, yrange)
+    if !(mask isa Nothing); xrange=nothing; yrange=nothing; end
+    spec_guess, _ = make_spectrum_from_cutout(spec_cube; xrange=xrange, yrange=yrange, mask=mask)
     neblines = spec_cube.linelist
     λ_obs = neblines[neblines.name .== string(spec_cube.ref_line), :lamvac][1] * (1 +spec_cube.z_init)
     iha_g = λ_obs - 15 .< spec_cube.wave .< λ_obs + 15
@@ -394,20 +393,31 @@ end
 """    make_spectrum_from_cutout()
 Convert fnu data to flam units, and vice versa. Input must be Unitful™ (i.e., Quantities).
 """
-function make_spectrum_from_cutout(cube, xrange=nothing, yrange=nothing)
+function make_spectrum_from_cutout(cube; xrange=nothing, yrange=nothing, mask=nothing)
+    # XXX: Looks like this works now! Now I just need to work out how to 
+    # make it not set NaNs everywhere when fitting from a frag map...
     if xrange isa Nothing; xrange = (1:size(cube.fluxcube)[1]); end
     if yrange isa Nothing; yrange = (1:size(cube.fluxcube)[2]); end
-    cutout_spec = cube.fluxcube[xrange, yrange, :]
-    cutout_errs = cube.errscube[xrange, yrange, :]
-    slice = cutout_spec[:,:,1]
-    if length(slice) == 1
-        spec_init = vec(cutout_spec)
-        errs_init = vec(cutout_errs)
+    if !(mask isa Nothing)
+        cutout_spec = cube.fluxcube[mask, :]
+        cutout_errs = cube.errscube[mask, :]
+        slice = cutout_spec[:, 1]
+        num_spaxels = length(slice)
+        spec_init = nanmean(cutout_spec, dim=(1))
+        errs_init = sqrt.(nansum(cutout_errs.^2, dim=(1))) / num_spaxels
     else
-        spec_init = nanmean(cutout_spec, dim=(1,2))
-        errs_init = sqrt.(nansum(cutout_errs.^2, dim=(1,2))) / length(slice)
+        cutout_spec = cube.fluxcube[xrange, yrange, :]
+        cutout_errs = cube.errscube[xrange, yrange, :]
+        slice = cutout_spec[:,:,1]
+        num_spaxels = length(slice)
+        if num_spaxels == 1  #1
+            spec_init = vec(cutout_spec)
+            errs_init = vec(cutout_errs)
+        else
+            spec_init = nanmean(cutout_spec, dim=(1,2))
+            errs_init = sqrt.(nansum(cutout_errs.^2, dim=(1,2))) / num_spaxels
+        end
     end
-    # @debug "`make_spectrum_from_cutout()`: Number of spatial pix in cutout" size(slice)
     return spec_init, errs_init
 end
 
@@ -450,11 +460,11 @@ julia> fit_spectrum_from_subcube(cube, xrange=33:33, yrange=44:44)
 ```
 """
 function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_component=false,
-    line_selection=nothing, kinematics_from=nothing, min_snr=0.5)
+    line_selection=nothing, kinematics_from=nothing, min_snr=0.5, mask=nothing)
     if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
     if isa(yrange, Nothing); yrange=range(1, size(cube.fluxcube)[2]); end
     wave_init = cube.wave
-    spec, errs = make_spectrum_from_cutout(cube, xrange, yrange)
+    spec, errs = make_spectrum_from_cutout(cube; xrange=xrange, yrange=yrange)
     @debug "Before NaNmask10'ing: " count(isnan.(spec)) count(isnan.(errs))
     notnan = nanmask10(spec, errs)
     goodwave, goodspec, gooderrs = wave_init[notnan], spec[notnan], errs[notnan]
@@ -503,6 +513,59 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
 end
 
 
+function fit_spectrum_from_mask(cube, mask; broad_component=false, line_selection=nothing, 
+    kinematics_from=nothing, min_snr=0.5)
+    # if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
+    # if isa(yrange, Nothing); yrange=range(1, size(cube.fluxcube)[2]); end
+    wave_init = cube.wave
+    spec, errs = make_spectrum_from_cutout(cube; mask=mask)
+    # @debug "Before NaNmask10'ing: " count(isnan.(spec)) count(isnan.(errs))
+    @debug "Before NaNmask10'ing: " count(!isnan.(spec)) count(!isnan.(errs)) spec errs
+    notnan = nanmask10(spec, errs)
+    goodwave, goodspec, gooderrs = wave_init[notnan], spec[notnan], errs[notnan]
+    # @debug xrange yrange goodwave, count(notnan)
+    # @debug "Goodwave: " goodwave
+    mod = build_model(cube, mask=mask, dom_init=Domain(goodwave),
+        broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from, min_snr=min_snr)
+    @debug "First pass at making model done!" mod
+    idx = make_lines_mask(mod, Domain(goodwave))
+    # @debug "Made lines mask for $xrange, $yrange !"
+    lwave, lspec, lerrs = goodwave[idx], goodspec[idx], gooderrs[idx]
+    # @debug "Before and after line masking: " length(goodwave), length(lwave)
+    if length(lwave) == 0; return NaN; end
+    lmod = build_model(cube, mask=mask, dom_init=Domain(lwave),
+        broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from, min_snr=min_snr)
+    lmeas = Measures(Domain(lwave), lspec, lerrs)
+    # return lmod
+    # return lmod, lmeas
+    @debug "Model before fitting: $xrange, $yrange:  " lmod lmeas lwave
+    if !(cube.ref_line in keys(lmod)); return NaN; end
+    # DEBUG:
+    @debug lmod, lmeas
+    @debug "Now trying for a fit" xrange yrange
+    @debug lmod
+    # results, stats = gmf.fit(lmod, lmeas, gmf.lsqfit())
+    # results, stats = gmf.fit(lmod, lmeas, minimizer=gmf.lsqfit())
+    #@info "Successfully fitted (col. $xrange, row $yrange)"
+    # @debug "Results and stats!" results stats
+    # END: 
+    try  # Too many things can go wrong to catch eatch one separately.
+        results, stats = gmf.fit(lmod, lmeas, gmf.lsqfit())
+        # results, stats = gmf.fit(lmod, lmeas, minimizer=gmf.lsqfit())
+        #@info "Successfully fitted (col. $xrange, row $yrange)"
+        @debug "Results and stats!" results stats
+        output = Dict(
+            :wave => goodwave,
+            :spec => goodspec,
+            :errs => gooderrs,
+            :measure => lmeas,
+            :results => results,
+            :fitstats => stats)
+        return output
+    catch
+        return lmod
+    end 
+end
 
 function makeresultdict(cube; broad_component=false, lines_select=nothing)
     @debug "Making output dict"
@@ -568,9 +631,10 @@ Optional arguments:
 - `min_snr::Number`: Where the numerically estimated S/N ratio per spaxel is below this value, the line will not be included 
   in the fit for this line, and the value set to NaN.
 """
-function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1.0, kinematics_from_lines=nothing)
+function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1.0, kinematics_from_lines=nothing, fragmap=nothing)
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
     slices_dict = makeresultdict(cube, broad_component=broad_component)
+    user_fragmap = fragmap
 
     if kinematics_from_lines isa Nothing
         model_lines = line_selection
@@ -578,54 +642,59 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
         model_lines = kinematics_from_lines
     end
 
+    if user_fragmap isa Nothing
+        fragmap = reshape(collect(1:length(cube.fluxcube[:,:,1])), size(cube.fluxcube)[1:end-1])
+    else 
+        fragmap = user_fragmap
+    end
+
     @debug "Made slices_dict"
-    @track for x in 1:xsize
-        for y in 1:ysize
-            print("Fitting col. $x, row $y \r")
-            numnan = count(isnan.(cube.fluxcube[x, y, :]))
-            nanratio = numnan/length(cube.wave)
-            if nanratio > 0.5
-                continue
+
+    @track for f in (fragmap |> unique |> sort)
+        thismask = fragmap .== f
+        print("Fitting fragment No. $f with $(thismask |> sum) spaxels \r")
+        numnan = count(isnan.(cube.fluxcube[thismask, :]))
+        testspec, testerr = make_spectrum_from_cutout(cube; mask=thismask)
+        nanratio = count(isnan.(testspec)) / length(testspec)
+        if nanratio > 0.5
+            continue
+        end
+        fitdict = fit_spectrum_from_mask(
+            cube, thismask; broad_component=broad_component, line_selection=model_lines)
+        @debug "What's a fitdict anyway?" fitdict typeof(fitdict)
+        if !isa(fitdict, Dict)
+            @debug "Fitdict $f was not a dict!"
+            continue
+        end
+        linesdict = Dict(l => fitdict[:results][l] for l in fitdict[:results] |> keys if l != :main)
+        if !(kinematics_from_lines isa Nothing)
+            minwave, maxwave = (cube.wave |> minimum, cube.wave |> maximum) ./ (1 + cube.z_init)
+            if line_selection isa Nothing
+                line_idx = minwave .< cube.linelist[:, :lamvac] .< maxwave
+                line_selection = cube.linelist[line_idx, :name] .|> Symbol
             end
-            # if kinematics_from_lines isa Nothing
-            #     model_lines = line_selection
-            # else
-            #     model_lines = kinematics_from_lines
-            # end
-            fitdict = fit_spectrum_from_subcube(
-                cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=model_lines)
-            @debug "What's a fitdict anyway?" fitdict typeof(fitdict)
-            if !isa(fitdict, Dict)
-                @debug "Fitdict $x, $y was not a dict!"
-                continue
+            forced_lines = setdiff(line_selection, kinematics_from_lines)
+            for l in forced_lines
+                outdict = fit_spectrum_from_mask(
+                    cube, thismask; broad_component=broad_component, line_selection=[l],
+                    kinematics_from=fitdict[:results], min_snr=min_snr)
+                # Do not fail gracefully, just flip the table and move on.
+                # if !(outdict isa Dict); println("Failed fragment $f with $(count(thismask)) spaxels"); continue; end
+                if !(outdict isa Dict); continue; end
+                if !(l in outdict[:results] |> keys); continue; end
+                oo = outdict[:results][l]
+                linesdict[l] = oo
             end
-            linesdict = Dict(l => fitdict[:results][l] for l in fitdict[:results] |> keys if l != :main)
-            if !(kinematics_from_lines isa Nothing)
-                minwave, maxwave = (cube.wave |> minimum, cube.wave |> maximum) ./ (1 + cube.z_init)
-                if line_selection isa Nothing
-                    line_idx = minwave .< cube.linelist[:, :lamvac] .< maxwave
-                    line_selection = cube.linelist[line_idx, :name] .|> Symbol
-                end
-                forced_lines = setdiff(line_selection, kinematics_from_lines)
-                for l in forced_lines
-                    outdict = fit_spectrum_from_subcube(
-                        cube, xrange=(x:x), yrange=(y:y), broad_component=broad_component, line_selection=[l],
-                        kinematics_from=fitdict[:results], min_snr=min_snr)
-                    # Do not fail gracefully, just flip the table and move on.
-                    if !(outdict isa Dict); continue; end
-                    if !(l in outdict[:results] |> keys); continue; end
-                    oo = outdict[:results][l]
-                    linesdict[l] = oo
-                    # linesdict[l] = outdict[:results][l]
-                end
-            end
-            # @debug fitdict[:results] fitdict[:fitstats]
-            fitdict[:linesdict] = linesdict
-            fill_in_fit_values!(slices_dict, fitdict, (x, y))
-            # sleep(0.001)
-        end 
+        end
+        fitdict[:linesdict] = linesdict
+        fill_in_fit_values!(slices_dict, fitdict, mask=thismask)
     end 
     mom0, mom1, mom2 = calculate_moments(cube)
+    if !(user_fragmap isa Nothing)
+        mom0 = mean_by_fragmap(mom0 .|> value, user_fragmap, errs=mom0 .|> uncertainty)
+        mom1 = mean_by_fragmap(mom1 .|> value, user_fragmap, errs=mom1 .|> uncertainty)
+        mom2 = mean_by_fragmap(mom2 .|> value, user_fragmap, errs=mom2 .|> uncertainty)
+    end
     # Moments come with both signal and noise now
     slices_dict[:mom0] = stack([value.(mom0), uncertainty.(mom0)], dims=3)
     slices_dict[:mom1] = stack([value.(mom1), uncertainty.(mom1)], dims=3)
@@ -640,6 +709,9 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
         end
         if !(String(s) in cube.linelist[!, "name"]); continue; end
         m0, m1, m2 = calculate_moments(cube, refline=s)
+        if !(user_fragmap isa Nothing)
+            m0 = mean_by_fragmap(m0 .|> value, user_fragmap, errs=m0 .|> uncertainty)
+        end
         m0v, m0e = m0 .|> value, m0 .|> uncertainty
         m0s = stack([m0v,m0e], dims=3)
         slices_dict[s][:,:,4:5] = m0s
@@ -674,12 +746,11 @@ Optional arguments:
   norm=1., and the others are scaled according to the values of `foverha` given in the line list
   input file.
 """
-function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int=100,
+function build_model(cube; xrange=nothing, yrange=nothing, mask=nothin, min_snr=0.5, fwhm_int=100,
     dom_init=nothing, broad_component=false, line_selection=nothing, kinematics_from=nothing, lock_kinematics=false)
     redss = (1. + cube.z_init)  # Just for convenience
     wave = cube.wave
     neblines = cube.linelist
-    # @assert
     if line_selection isa Nothing; line_selection = Symbol.(neblines[:, "name"]); end
     if !(kinematics_from isa Nothing); lock_kinematics=true; end
     if broad_component & !(kinematics_from isa Nothing)
@@ -689,10 +760,9 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
     union!(line_selection, [cube.ref_line])
     if isa(dom_init, Nothing); dom_init = Domain(wave); end
     @debug "build_model() domain: " xrange yrange dom_init
-    spec_init, errs_init = make_spectrum_from_cutout(cube, xrange, yrange)
+    spec_init, errs_init = make_spectrum_from_cutout(cube; xrange=xrange, yrange=yrange, mask=mask)
     components = OrderedDict()
     complist = Vector{Symbol}()
-    # λobs_ref = neblines[neblines.name .== string(cube.ref_line), :lamvac][1] * (redss)
     for l in neblines.name[1:end]
         if !(Symbol(l) in line_selection); continue; end
         lamvac  = neblines[neblines.name.==l, :lamvac][1]
@@ -714,14 +784,12 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
             end 
         end
         fha_g, reds_g = estimate_redshift_reference_line_flux(
-            cube, xrange=xrange, yrange=yrange)
+            cube, xrange=xrange, yrange=yrange, mask=mask)
         if isnan(fha_g) || isnan(reds_g)
             @debug "Numerical integration of line $l failed due to lack of data." l
             continue
         end
         norm = estimate_line_snr(wave[idx], spec_init[idx], err=errs_init[idx], only_flux=true)
-        # println("normold, norm ", normold, " ", norm)
-        # fwhm_inst = cube.lsf_fitter(λobs_ref)
         fwhm_inst = cube.lsf_fitter(lam_obs)
         # @debug "Resolving power at line $l: " fwhm_inst
         if kinematics_from isa Nothing
@@ -730,13 +798,10 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
         else
             fwhm_tot = sqrt(kinematics_from[cube.ref_line].fwhm_kms.val^2)  # ^2 + fwhm_inst^2)
             zz = kinematics_from[cube.ref_line].redshift.val
-            # if broad_component; zz_broad=kinematics_from
         end
-        # if kinematics_from; fwhm_tot
         g = GModelFit.FComp(_gauss_line, [:waves];
             lab_wave=lamvac, redshift=zz,
             fwhm_kms=fwhm_tot, norm=norm, lsf=fwhm_inst)
-        # g = GModelFit.Gaussian
         components[Symbol(l)] = g # = ref_line
         append!(complist, [Symbol(l)])
         
@@ -756,7 +821,6 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
     mod = Model(components)
     # mod[:main] = SumReducer(complist)
     @debug "SumReducer succeeded!" components
-    # mod = Model(dom_init, components)
     # Now: We set initial values, locked variables and interdependencies.
     for comp in keys(mod)
         @debug "Setting up $comp"
@@ -766,7 +830,6 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
         if comp == :main
             @debug "Comp was `:main`, moving on"
             continue
-        # elseif comp != Symbol(cube.ref_line)
         elseif !(comp in [Symbol(cube.ref_line), Symbol(String(cube.ref_line) * "_broad")])
             @debug "Fixing parameters for $comp"
             if endswith(String(comp), "_broad")
@@ -785,8 +848,6 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
                 mod[comp].fwhm_kms.fixed = true
                 mod[comp].redshift.fixed = true
             end
-            # mod[comp].fwhm_kms.low = 1.
-            # mod[comp].fwhm_kms.high = 2000.
             mod[comp].norm.low = 0.
             mod[comp].lsf.fixed = true
         else
@@ -805,7 +866,6 @@ function build_model(cube; xrange=nothing, yrange=nothing, min_snr=0.5, fwhm_int
             if endswith(String(comp), "_broad")
                 mod[comp].redshift.val = cube.z_init - cube.z_init * 0.001
                 mod[comp].fwhm_kms.patch = @fd (m, v) -> v + m[Symbol(cube.ref_line)].fwhm_kms
-                # mod[comp].fwhm_kms.patch = @λ(m, v) -> v + m[Symbol(cube.ref_line)].fwhm_kms
                 mod[comp].fwhm_kms.low = 0.
             end 
         end 
@@ -818,29 +878,15 @@ end
 """    _gauss_line(waves, lab_wave, redshift, fwhm_kms, norm, lsf)
 """
 function _gauss_line(
-    waves::Array, lab_wave::Float64, redshift::Float64, fwhm_kms::Float64, norm::Float64, lsf::Float64)
-    cen_wave = lab_wave * (1. + redshift)
-    fwhm_inst = cen_wave / lsf  # get_resolving_power(
-        # cen_wave, instrument=instrument, order=order, grism=grating)
-    fwhm_aa = v_to_deltawl(fwhm_kms, cen_wave)
-    #= fwhm_tot = sqrt(fwhm_inst^2 + fwhm_kms^2) =#
-    fwhm_tot = sqrt(fwhm_inst^2 + fwhm_aa^2)
-    sigma_aa = fwhm_to_sigma(fwhm_tot)
-    #= sigma_aa = fwhm_tot / ckms * cen_wave / (2*sqrt(2*log10(2))) =#
-    flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm
-    # @debug "Function _line_gauss" sigma_aa cen_wave norm fwhm_tot
-    return flux
+  waves::Array, lab_wave::Float64, redshift::Float64, fwhm_kms::Float64, norm::Float64, lsf::Float64)
+  cen_wave = lab_wave * (1. + redshift)
+  fwhm_inst = cen_wave / lsf
+  fwhm_aa = v_to_deltawl(fwhm_kms, cen_wave)
+  fwhm_tot = sqrt(fwhm_inst^2 + fwhm_aa^2)
+  sigma_aa = fwhm_to_sigma(fwhm_tot)
+  flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm
+  return flux
 end
-#= function _gauss_line( =#
-#=     waves::Array, lab_wave::Float64, redshift::Float64, fwhm_kms::Float64, norm::Float64, lsf::Float64)  #, grating="g140h") =#
-#=     cen_wave = lab_wave * (1. + redshift) =#
-#=     fwhm_inst = ustrip(ckms) / lsf  # get_resolving_power( =#
-#=         # cen_wave, instrument=instrument, order=order, grism=grating) =#
-#=     fwhm_tot = sqrt(fwhm_inst^2 + fwhm_kms^2) =#
-#=     sigma_aa = fwhm_tot / ckms * cen_wave / (2*sqrt(2*log10(2))) =#
-#=     flux = gauss(waves, ustrip(sigma_aa), ustrip(cen_wave)) .* norm =#
-#=     return flux =#
-#= end =#
 
  
 """
@@ -860,52 +906,42 @@ Optional arguments:
 - A tuple of three 2D arrays (images) of the moments mapped to each spatial pixel.
 """
 function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
-    if isa(refline, Nothing)
-        refline = cube.ref_line
-    end 
-    println("Reference line: $refline")
-    lam_rest = cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1]
-    lam_obs = lam_rest * (1 + cube.z_init)  # cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1] * (1 + cube.z_init)
-    println("$lam_rest, $lam_obs")
-    window_ang = v_to_deltawl(window_kms/2, lam_obs)
-    idx = lam_obs - window_ang .< cube.wave .< lam_obs + window_ang
-    # waves, flux = cube.wave[idx]./(1 + cube.z_init), cube.fluxcube[:,:,idx]
-    waves, flux = cube.wave[idx], cube.fluxcube[:,:,idx] .± cube.errscube[:,:,idx]
-    println("Calculate moments: Size of flux chunk is: ", size(flux))
-    # Make sure things are well formatted now before they get passed along.
-    @assert size(waves)[1] == size(flux)[3]
-    # Empty arrays to fill in:
-    @debug waves
-    mom0 = similar(flux[:, :, 1])
-    mom1 = similar(flux[:, :, 1])
-    mom2 = similar(flux[:, :, 1])
-    ncols, nrows = size(flux)
-    # println("$nrows, $ncols")
-    # println("$(waves |> minimum), $(waves |> maximum)")
-    for i in 1:ncols
-    # @track for i in 1:ncols
-        for j in 1:nrows
-            # println("$i, $j")
-            theflux = flux[i, j, :]  # Just for convenience
-            # println("$(theflux |> minimum), $(theflux |> maximum)")
-            # mom0a = NumericalIntegration.integrate(theflux, waves)
-            deltalam = waves[2:end] .- waves[1:end-1] 
-            append!(deltalam, deltalam[end])
-            mom0b = (deltalam .* theflux) |> nansum
-            # mom0[i, j] = mom0a
-            mom0[i, j] = abs(mom0b)
-            mom1[i, j] = nansum(waves .* theflux) ./ nansum(theflux)
-            # mom1[i, j] = nansum(waves .* theflux .* deltalam) #./ nansum(theflux)
-            # Plots.plot!(waves, theflux)
-            #
-            @debug i, j theflux mom0[i, j] mom1[i, j]
-            mom2[i, j] = sqrt(
-                  abs.(nansum((waves .- mom1[i, j]).^2 .* theflux)) 
-                  / abs.(nansum(theflux))
-            )
-        end
-    end 
-    return mom0, mom1, mom2
+  if isa(refline, Nothing)
+    refline = cube.ref_line
+  end 
+  println("Reference line: $refline")
+  lam_rest = cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1]
+  lam_obs = lam_rest * (1 + cube.z_init)  
+  # cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1] * (1 + cube.z_init)
+  println("$lam_rest, $lam_obs")
+  window_ang = v_to_deltawl(window_kms/2, lam_obs)
+  idx = lam_obs - window_ang .< cube.wave .< lam_obs + window_ang
+  waves, flux = cube.wave[idx], cube.fluxcube[:,:,idx] .± cube.errscube[:,:,idx]
+  println("Calculate moments: Size of flux chunk is: ", size(flux))
+  # Make sure things are well formatted now before they get passed along.
+  @assert size(waves)[1] == size(flux)[3]
+  # Empty arrays to fill in:
+  @debug waves
+  mom0 = similar(flux[:, :, 1])
+  mom1 = similar(flux[:, :, 1])
+  mom2 = similar(flux[:, :, 1])
+  ncols, nrows = size(flux)
+  for i in 1:ncols
+    for j in 1:nrows
+      theflux = flux[i, j, :]  # Just for convenience
+      deltalam = waves[2:end] .- waves[1:end-1] 
+      append!(deltalam, deltalam[end])
+      mom0b = (deltalam .* theflux) |> nansum
+      mom0[i, j] = abs(mom0b)
+      mom1[i, j] = nansum(waves .* theflux) ./ nansum(theflux)
+      @debug i, j theflux mom0[i, j] mom1[i, j]
+      mom2[i, j] = sqrt(
+        abs.(nansum((waves .- mom1[i, j]).^2 .* theflux)) /
+        abs.(nansum(theflux))
+      )
+    end
+  end 
+  return mom0, mom1, mom2
 end 
 
 
@@ -925,7 +961,6 @@ function moments(wave::AbstractFloat, flux::Measurement{AbstractFloat})
 end
 
 
-
 """    make_lines_mask(mod; window_width_kms=1000, plot_it=false)
 Creates a mask which keeps data in a window around each line in the model, and discards
 the rest. The window width is customizable.
@@ -936,7 +971,6 @@ the rest. The window width is customizable.
 """
 function make_lines_mask(mod::Model, dom::Domain; window_width_kms::Float64=1000., plot_it::Bool=false, plot_comps::Bool=false)
     wave = coords(dom)
-    # wave = coords(mod.domain)
     mask = falses(size(wave))
     for comp in keys(mod)
         if comp == :main
@@ -944,7 +978,6 @@ function make_lines_mask(mod::Model, dom::Domain; window_width_kms::Float64=1000
         end
         cenwave = mod[comp].lab_wave.val * (1 + mod[comp].redshift.val)
         window_width_ang = v_to_deltawl(window_width_kms, cenwave)
-        # @debug "Make line mask: " wave window_width_ang
         mask[cenwave-window_width_ang .< wave .< cenwave+window_width_ang] .= 1
     end 
     if plot_it == true
@@ -958,13 +991,11 @@ function make_lines_mask(mod::Model, dom::Domain; window_width_kms::Float64=1000
             end 
         end
         Plots.plot!(coords(mod.domain), mod()./thefactor, title="Model and mask", label="Model")
-        # Plots.plot!(coords(mod.domain), mask .* 0.5 ./ thefactor, label="Mask")
         Plots.xlabel!("Wavelength")
         Plots.gui()
     end 
     return mask
 end 
-
 
 
 """    nanmask10(flux, dflux)
@@ -979,8 +1010,8 @@ The `flux` and `dflux` (error) arrays must have the same size.
 function nanmask10(
     flux::Array{Float64}, dflux::Array{Float64})::BitVector
     idx1 = (.!isnan.(flux)) .& (.!isnan.(dflux)) .& (dflux .!= 0.)
-    idx = idx1# .& idx2
-    return idx  #flux[idx], dflux[idx]
+    idx = idx1
+    return idx
 end 
 
 
@@ -1041,27 +1072,35 @@ end
 """    fill_in_fit_values(dict::Dict, fitresults::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)
 """
 function fill_in_fit_values!(
-    dict::Dict{Any,Any}, fitdict::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)
-    row, column = pix_coords
+    dict::Dict{Any,Any}, fitdict::Dict; fitstats=NaN, pix_coords=nothing, mask=nothing)
+
+    if mask isa Nothing
+        mask = falses(dict[:fwhm] |> size)
+    end
+
     fitstats = fitdict[:fitstats].fitstat
     fitresults = fitdict[:results]
     @debug dict[:refline] fitresults[Symbol(dict[:refline])] 
-    dict[:fitstats][row, column] = fitstats
-    dict[:redshift][row, column, 1] = fitresults[Symbol(dict[:refline])].redshift.val
-    dict[:redshift][row, column, 2] = fitresults[Symbol(dict[:refline])].redshift.unc
-    dict[:redshift][row, column, 3] = fitresults[Symbol(dict[:refline])].redshift.val/fitresults[Symbol(dict[:refline])].redshift.unc
-    dict[:fwhm][row, column, 1] = fitresults[Symbol(dict[:refline])].fwhm_kms.val
-    dict[:fwhm][row, column, 2] = fitresults[Symbol(dict[:refline])].fwhm_kms.unc
-    dict[:fwhm][row, column, 3] = fitresults[Symbol(dict[:refline])].fwhm_kms.val/fitresults[Symbol(dict[:refline])].fwhm_kms.unc
+    dict[:fitstats][mask] .= fitstats
+    dict[:redshift][mask, 1] .= fitresults[Symbol(dict[:refline])].redshift.val
+    dict[:redshift][mask, 2] .= fitresults[Symbol(dict[:refline])].redshift.unc
+    dict[:redshift][mask, 3] .= fitresults[Symbol(dict[:refline])].redshift.val / 
+        fitresults[Symbol(dict[:refline])].redshift.unc
+    dict[:fwhm][mask, 1] .= fitresults[Symbol(dict[:refline])].fwhm_kms.val
+    dict[:fwhm][mask, 2] .= fitresults[Symbol(dict[:refline])].fwhm_kms.unc
+    dict[:fwhm][mask, 3] .= fitresults[Symbol(dict[:refline])].fwhm_kms.val /
+        fitresults[Symbol(dict[:refline])].fwhm_kms.unc
     if :redshift_broad in keys(dict)
-        dict[:redshift_broad][row, column, 1] = fitresults[Symbol(dict[:refline_broad])].redshift.val
-        dict[:redshift_broad][row, column, 2] = fitresults[Symbol(dict[:refline_broad])].redshift.unc
-        dict[:redshift_broad][row, column, 3] = fitresults[Symbol(dict[:refline_broad])].redshift.val/fitresults[Symbol(dict[:refline_broad])].redshift.unc
-        dict[:fwhm_broad][row, column, 1] = fitresults[Symbol(dict[:refline_broad])].fwhm_kms.val
-        dict[:fwhm_broad][row, column, 2] = fitresults[Symbol(dict[:refline_broad])].fwhm_kms.unc
-        dict[:fwhm_broad][row, column, 3] = fitresults[Symbol(dict[:refline_broad])].fwhm_kms.val/fitresults[Symbol(dict[:refline_broad])].fwhm_kms.unc
+        dict[:redshift_broad][mask, 1] .= fitresults[Symbol(dict[:refline_broad])].redshift.val
+        dict[:redshift_broad][mask, 2] .= fitresults[Symbol(dict[:refline_broad])].redshift.unc
+        dict[:redshift_broad][mask, 3] .= fitresults[Symbol(dict[:refline_broad])].redshift.val /
+            fitresults[Symbol(dict[:refline_broad])].redshift.unc
+        dict[:fwhm_broad][mask, 1] .= fitresults[Symbol(dict[:refline_broad])].fwhm_kms.val
+        dict[:fwhm_broad][mask, 2] .= fitresults[Symbol(dict[:refline_broad])].fwhm_kms.unc
+        dict[:fwhm_broad][mask, 3] .= fitresults[Symbol(dict[:refline_broad])].fwhm_kms.val /
+            fitresults[Symbol(dict[:refline_broad])].fwhm_kms.unc
     end 
-    fwhmu = dict[:fwhm][row, column, 1] ± dict[:fwhm][row, column, 2]
+    fwhmu = dict[:fwhm][mask, 1] .± dict[:fwhm][mask, 2]
     sigmau = fwhm_to_sigma(fwhmu)
     ## Fill in the fitted flux of each line in each spaxel
     for l in keys(dict)
@@ -1073,12 +1112,12 @@ function fill_in_fit_values!(
         fluxu = sqrt(2π) * sigmau * normu
         # println("$pix_coords.val, $fluxu.val, $normu.val, $(fluxu.val/normu.val)")
         # fluxu = normu
-        # dict[l][row, column, 1] = fluxu.val
-        # dict[l][row, column, 2] = fluxu.err
-        # dict[l][row, column, 3] = fluxu.val/fluxu.err
-        dict[l][row, column, 1] = normu.val
-        dict[l][row, column, 2] = normu.err
-        dict[l][row, column, 3] = normu.val/normu.err
+        # dict[l][mask, 1] = fluxu.val
+        # dict[l][mask, 2] = fluxu.err
+        # dict[l][mask, 3] = fluxu.val/fluxu.err
+        dict[l][mask, 1] .= normu.val
+        dict[l][mask, 2] .= normu.err
+        dict[l][mask, 3] .= normu.val / normu.err
     end
 end
 
@@ -1130,20 +1169,20 @@ Write a dictionary of line maps as output by the cube fitter function to a multi
 extension FITS file. NEW VERSION
 """
 function write_maps_to_fits(filepath::String, mapsdict::Dict)
-    f = FITS(filepath, "w")
-    keylist = sort(collect(keys(mapsdict)))
-    primhead = mapsdict[:header]; primhead["CONTINUE"] = ""  #push!(primhead, "CONTINUE"="")
-    sechead = mapsdict[:header]; sechead["CONTINUE"] = ""
-    write(f, collect(0:0.01:1), header=primhead)
-    for k in keylist
-        if k in [:header, :primhead, :refline, :refline_broad]
-            continue
-        end 
-        @debug "What is this nonsense?" String(k) mapsdict[k]
-        write(f, mapsdict[k], header=sechead, name=String(k))
+  f = FITS(filepath, "w")
+  keylist = sort(collect(keys(mapsdict)))
+  primhead = mapsdict[:header]; primhead["CONTINUE"] = ""
+  sechead = mapsdict[:header]; sechead["CONTINUE"] = ""
+  write(f, collect(0:0.01:1), header=primhead)
+  for k in keylist
+    if k in [:header, :primhead, :refline, :refline_broad]
+        continue
     end 
-    close(f)
-    return nothing
+    @debug "What is this nonsense?" String(k) mapsdict[k]
+    write(f, mapsdict[k], header=sechead, name=String(k))
+  end 
+  close(f)
+  return nothing
 end 
 
 function load_slices_dict(filepath::String)
@@ -1158,7 +1197,6 @@ function load_slices_dict(filepath::String)
       outdict[:PRIMARY] = read_header(hdu)
       println("No EXT name for ", i-1)
     end
-    # println(i)
   end
   return outdict
 end
@@ -1222,13 +1260,25 @@ end
 ###=============================================================================
 #   Fragmentation map and Voronoi binning related helper functions
 #
+"""    mean_by_fragmap(data, fragmap; errs=nothing)
+
+Given a 2D array and a map of spatial bins of the same size, outputs a new array 
+with each bin filled with the mean of the data witin it. Is NaN/missing-aware, and 
+optionally takes an array of standard errors which is propagated in the standard way.
+
+For bins of 1 pixel size, this is just the identity operator. 
+"""
 function mean_by_fragmap(data, fragmap; errs=nothing)
     if !(errs isa Nothing)
         data = data .± errs
     end
     outmap = similar(data)
-    for i in (fragmap |> unique)
-        outmap[fragmap.==i] .= nanmean(data[fragmap.==i])
+    for i in (fragmap |> unique |> sort)
+        fragmask = fragmap .== i
+        spaxs = count(fragmask)
+        print("`mean_by_fragmap` processing fragment # $i with $spaxs spaxels \r")
+        dpoints = vec(data[fragmask])
+        outmap[fragmap.==i] .= nanmean(dpoints)
     end
     return outmap
 end
@@ -1240,6 +1290,7 @@ end
 """ Please load the `VoronoiBinning` package to activate this functionality.
 """
 function voronoi_bin_slice(Any)
+  println("This function requires the `VoronoiBinning` module to be installed and loaded.")
   return nothing
 end
 

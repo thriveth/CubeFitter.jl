@@ -256,9 +256,9 @@ In order of approximate priority:
 - [x] Allow to measure flux/upper limits numerically when S/N threshold is not
   met (now does this all the time, whether S/N threshold is met or not - it is
   computationally cheap and simpler this way. .
-- [x] Spectrum extraction and fitting from arbitrary masks, e.g. fragmentation
-  maps.
 - [x] Implement Voronoi binning
+- [x] Spectrum extraction and fitting from arbitrary masks, e.g. fragmentation
+  maps or Voronoi bins.
 - [ ] Allow user to fix ratio between lines of doublets with shared upper
   levels.
 - [ ] Create interface to select lines to always fit together (useful for

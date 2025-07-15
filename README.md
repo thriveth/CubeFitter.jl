@@ -223,7 +223,7 @@ individual arrays.
 
 There really isn't much to look at but here it is:
 
-![Screenshot of CubeFitter in action](./Screenshots/CubeFitter.png)
+![Screenshot of CubeFitter in action](./Media/Screenshots/CubeFitter.png)
 
 
 # Development
@@ -256,15 +256,17 @@ In order of approximate priority:
 - [x] Allow to measure flux/upper limits numerically when S/N threshold is not
   met (now does this all the time, whether S/N threshold is met or not - it is
   computationally cheap and simpler this way. .
-- [ ] Spectrum extraction and fitting from arbitrary masks, e.g. fragmentation
+- [x] Spectrum extraction and fitting from arbitrary masks, e.g. fragmentation
   maps.
-- [ ] Implement adaptive binning.
+- [x] Implement Voronoi binning
 - [ ] Allow user to fix ratio between lines of doublets with shared upper
   levels.
 - [ ] Create interface to select lines to always fit together (useful for
   blended features).
 - [ ] Test and ensure the `MUSECube` and `MIRICube` structs actually work as
   advertised
+- [ ] Implement adaptive binning (lower priority now that Voronoi binning is
+  implemented).
 - [ ] Add support for more instruments. Suggestions welcome (especially if
   accompanied with a suitable test dataset).
 

@@ -223,7 +223,8 @@ individual arrays.
 
 There really isn't much to look at but here it is:
 
-![Screenshot of CubeFitter in action](./Media/Screenshots/CubeFitter.png)
+<!-- ![Screenshot of CubeFitter in action](./Media/Screenshots/CubeFitter.png) -->
+![Screenshot of CubeFitter in action](./Media/Screenshots/SessionScreenshot.png)
 
 
 # Development

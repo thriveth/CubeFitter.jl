@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 module CubeFitter
 ###============###
 export AbstractSpectralCube, NIRSpecCube, MUSECube
@@ -630,6 +631,7 @@ Optional arguments:
   vary.
 - `min_snr::Number`: Where the numerically estimated S/N ratio per spaxel is below this value, the line will not be included 
   in the fit for this line, and the value set to NaN.
+- `fragmap::Array`: Optional fragmentation map. If passed, an average will be made per fragment instead of a measurement for each spaxel.
 """
 function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1.0, kinematics_from_lines=nothing, fragmap=nothing)
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
@@ -1213,7 +1215,7 @@ Quick and convenient visualization of slices output fromthe `fit_cube()` functio
 - `cmap::Symbol`: The colormap to use with `Plots.heatmap()`.
 - `colorlimits::Tuple`: Tuple of (min, max) color cut values.
 """
-function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits=nothing, cmap=:cubehelix)
+function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits=nothing, cmap=:cubehelix, comment="")
     theslice = slicedict[Symbol(name)]
     layers = Dict(:data => 1, :errs => 2, :snr => 3, :numdata => 4, :numerrs => 5)
     # thelayer = layers[Symbol(what)]
@@ -1223,6 +1225,7 @@ function quicklook_slice(slicedict, name; what=:data, norm=identity, colorlimits
     end
     data = clamp.(data, colorlimits[1], colorlimits[2])
     Plots.heatmap(data .|> norm, aspect_ratio=:equal, color=cmap)
+    Plots.title!("Showing: $name; kind: $what, $comment")
 end 
 
 
@@ -1289,7 +1292,7 @@ end
 #
 """ Please load the `VoronoiBinning` package to activate this functionality.
 """
-function voronoi_bin_slice(Any)
+function voronoi_bin_slice(::Any)
   println("This function requires the `VoronoiBinning` module to be installed and loaded.")
   return nothing
 end

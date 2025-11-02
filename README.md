@@ -23,7 +23,7 @@ This package contains of a few main components of functionality, plus some plumb
 
 - A family of `SpectralCube` types which handle the data and metadata.
 - A continuum subtraction function (see description below)
-- The functionality for fitting emission lines, either -per-spaxel, or for a number of arbitrary spatial bins/fragments.
+- The functionality for fitting emission lines, either -per-spaxel, or for a number of arbitrary spatial bins/image segments.
 - A wrapper around the `VoronoiBinning` package, which is an optional dependency. 
 
 The workhorses of this package are the various types `NIRSpecCube`, `MUSECube`,
@@ -71,7 +71,7 @@ The function `fit_cube` is mainly a convenience function enabling one to cycle
 through either individual spaxels or a map of numbered bins, and extracting and
 fitting a spectrum for every mask or spaxel, and filling in best-fit fitted
 values of line fluxes and kinematic parameters and their associated standard
-errors and fit statistcs into the corresponding spaxel or fragment.
+errors and fit statistcs into the corresponding spaxel or segment.
 
 In addition to the line fits, the routine also measures the flux with standard
 errors by numerical integration in each spaxel; this is saved together with the
@@ -185,18 +185,18 @@ documentation. The functions are:
   `build_model`. See the docstrings of these functions for directions.
 
 
-### Fitting from fragmentation map
+### Fitting from segmentation map
 
 As mentioned above, `fit_cube` and `fit_spectrum_from_subcube` can take an
 arbitrary (set of) mask(s) as input, for which to extract spectrum and perform
-fitting. This set of masks can be a fragmentation map, a map of Voronoi bins
+fitting. This set of masks can be a segmentation map, a map of Voronoi bins
 (see under "extras" below), or created in any arbitrary way.
 
 #### Map/mask format
 
 - **`fit_cube`**: A 2D array of **integers** of the same dimensions as the
   spatial dimensions of the data cube in question. Every number is interpreted
-  as a separate fragment. 
+  as a separate segment. 
 - **`fit_spectrum_from_subcube`**: A 2D BitArray (created as an array of type
   Bool), where excluded spaxels get the value `false`/0, and included spaxels are
   `true`/1. 
@@ -258,7 +258,7 @@ In order of approximate priority:
   met (now does this all the time, whether S/N threshold is met or not - it is
   computationally cheap and simpler this way. .
 - [x] Implement Voronoi binning
-- [x] Spectrum extraction and fitting from arbitrary masks, e.g. fragmentation
+- [x] Spectrum extraction and fitting from arbitrary masks, e.g. segmentation
   maps or Voronoi bins.
 - [ ] Allow user to fix ratio between lines of doublets with shared upper
   levels.

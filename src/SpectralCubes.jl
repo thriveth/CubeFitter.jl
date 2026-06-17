@@ -140,6 +140,7 @@ mutable struct MUSECube <: AbstractSpectralCube
 end
 
 
+
 function Base.show(io::IO, cube::AbstractSpectralCube)
     cubesize = cube.fluxcube |> size
     print(

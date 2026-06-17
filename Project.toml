@@ -1,7 +1,7 @@
 name = "CubeFitter"
 uuid = "dc4e8925-179f-4201-9ae1-2609c7232911"
+version = "0.4.0"
 authors = ["T. Emil Rivera-Thorsen <trive@astro.su.se>"]
-version = "0.3.1"
 
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
@@ -23,7 +23,9 @@ Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Term = "22787eb5-b846-44ae-b979-8e399b8463ab"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Uncertain = "b33f403f-199b-472b-b9d0-1cd2092892d0"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
+UnitfulAngles = "6fb2a4bd-7999-5318-a3b2-8ad61056cd98"
 UnitfulAstro = "6112ee07-acf9-5e0f-b108-d242c714bf9f"
 UnitfulEquivalences = "da9c4bc3-91c8-4f02-8a40-6b990d2a7e0c"
 
@@ -35,7 +37,9 @@ VoronoiBinning = "0480b74a-4474-4b41-b184-abfd81603c41"
 UseVoronoiBin = "VoronoiBinning"
 
 [compat]
-GModelFit = ">= 0.5.2"
+GModelFit = "0.5.2 - 0.7.0"
 PythonPlot = "1.0.6"
+Uncertain = "0.1.20"
+UnitfulAngles = "0.7.2"
 VoronoiBinning = "1.0.1"
 julia = ">= 1.10"

@@ -1,25 +1,34 @@
 # SPDX-License-Identifier: MIT
 module CubeFitter
 ###============###
-export AbstractSpectralCube, NIRSpecCube, MUSECube
 export calculate_moments, fit_cube, fit_spectrum_from_subcube
 export make_spectrum_from_cutout, make_lines_mask, toggle_fnu_flam
 export write_maps_to_fits, write_spectral_cube_to_fits, quickload_neblines
 export quicklook_slice, quicklook_model, quicklook_fit_result_dict
 ###============================================================###
-using Measurements: result, value, uncertainty
+using Measurements: result, uncertainty, value
 # Basic computing functionality, misc.
 using Base: NullLogger
 using Base.Threads, Printf, Logging, LoggingExtras
 # Handle NaN's more gracefully than standard Julia
 using NaNStatistics
 # Physical units and unit conversion, and uncertainties
-using Unitful, UnitfulAstro, UnitfulEquivalences, Measurements
+using Unitful 
+using UnitfulAstro 
+using UnitfulEquivalences 
+using Measurements
+using Uncertain
+# Is the next one really necessary, or should I just hardcode the constants?
 using PhysicalConstants.CODATA2018
 # Data formats, table, the works
-using FITSIO, DataFrames, DataStructures, CSV
+using FITSIO
+using DataFrames
+using DataStructures 
+using CSV
 # Interpolation, modeling and fitting
-using Polynomials, GModelFit, FastRunningMedian
+using Polynomials 
+using FastRunningMedian
+using GModelFit  # TODO: Clean up GMF imports/usings!
 using GModelFit: AbstractComponent, Parameter, evaluate!
 import GModelFit as gmf
 import Interpolations: LinearInterpolation
@@ -28,6 +37,8 @@ using NumericalIntegration
 import NumericalIntegration as nui
 import Plots
 using Term.Progress
+
+# Spectroscopic helper functions
 include("./SpecHelpers.jl")
 using .SpecHelpers
 export load_neblines, load_fits_cube, load_slices_dict
@@ -37,11 +48,12 @@ const ckms = SpeedOfLightInVacuum |> u"km/s"
 const caps = SpeedOfLightInVacuum |> u"Å/s"
 datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
 include("./ContSubt.jl")
-export cont_subt
+export cont_subt, cont_subt_spectrum
 
-# Custom Gaussian component
-# include("./GaussianComponent.jl")
-# export EmissionGauss, gauss 
+# The spectral cube types
+include("./SpectralCubes.jl")
+export AbstractSpectralCube, NIRSpecCube, MUSECube, MIRICube
+
 
 """    quickload_neblines()
 Load the default spectral line table.
@@ -84,149 +96,26 @@ global_logger(NullLogger())
 # global_logger(FileLogger("CubeFitter.log"))  # Default
 
 
-# Declaring an abstract SpectralCube type will allow us to make SpectralCube objects
-# inheriting from it for various ls instruments, which require different treatments and
-# different kind of, and still be able to write functions which can operate on all of them. 
-abstract type AbstractSpectralCube end
 
-"""    GenericSpectralCube(filepath; <keyword arguments>)
-Thus far, this is not actually implemented.
-It is planned to be a barebones solution for cubes that are not from any of the
-explicitly supported.
-"""
-mutable struct GenericSpectralCube <: AbstractSpectralCube
-    instrument::String
-    wave::Array
-    fluxcube::Array
-    errscube::Array
-end
-
-
-"""    NIRSpecCube(filepath, grating; <keyword arguments>)
-Load data from a JWST/NIRSpec IFU datacube into a Julia `struct`.
-# Arguments
-- `filepath::String`: Path to FITS file containing the data.
-- `grating::String`: The grating used to make the observations. Must be in all lower case.
-# Optional arguments
-- `linelist_path::String`: If another list of emission lines than the standard is to be used,
-  this is where to pass the path to it. 
-- `lsf_file_path::String`: Path to any non-default version of the LSF solution file. This must at
-  present time have the same format as the standard dispersion files included in this package.
-- `z_init::Float`: An initial guess of the cosmological redshift of the observed object. This should be
-  within ~5% of the true value, otherwise the code doesn't know what to do with the data. 
-- `ref_line`: The (strong) emission line to use for initial redshift and flux estimates. This parameter
-  is really important and honestly I am not sure why I put it in the optional arguments... 
-"""
-mutable struct NIRSpecCube <: AbstractSpectralCube
-    """ A struct representing a NIRSpec IFU datacube"""
-    grating::String
-    wave::Array
-    fluxcube::Array
-    errscube::Array
-    header::FITSHeader
-    primheader::FITSHeader
-    linelist::DataFrame
-    lsf_fitter
-    z_init
-    ref_line
-    flux_convert
-    function NIRSpecCube(filepath::String, grating::String; 
-            linelist_path=joinpath(datapath, "neblines.dat"), 
-            lsf_file_path=joinpath(datapath, "jwst_nirspec_$(grating)_disp.fits"), 
-            z_init=0.0, reference_line=:OIII_5007, data_ext="SCI", error_ext="ERR") 
-        linelist = load_neblines(linelist_path)
-        ddict = load_fits_cube(filepath, data_ext=data_ext, error_ext=error_ext)
-        origflux = deepcopy(ddict[:Data])
-        ddict = convert_ergscms_Å_units(ddict; instrument="NIRSpec")
-        wave = ustrip.(ddict[:Wave])
-        fluxcube = ustrip.(ddict[:Data])
-        errscube = ustrip.(ddict[:Errs])
-        header = ddict[:Header]
-        primheader = ddict[:Primheader]
-        itp = get_resolving_power("NIRSpec", setting=grating)
-        fluxconverter = nanmean(origflux ./ fluxcube, dims=(1,2))
-        new(grating, wave, fluxcube, errscube, header, primheader, linelist, itp, z_init, reference_line, fluxconverter)
-    end
-end
-
-
-"""    TODO: Do I keep this or throw it away again?
-"""
-function set_cube_units(incube::AbstractSpectralCube; to_data_units="ergscms", to_spectral_units="aa")
-    dustrings = ["ergscms", "native", ]
-    wustrints = ["AA", "Hz", "micron", "μm"]
-    specunit = uparse(to_spectral_units)
-    dataunit = uparse(to_spectral_units)
-    return nothing
-end
-
-
-"""    MIRICube(filepath, grating; <keyword arguments>)
-Load data from a JWST/MIRI IFU datacube into a Julia `struct`.
-# Arguments
-"""
-mutable struct MIRICube <: AbstractSpectralCube
-    """ A struct representing a MIRI IFU datacube"""
-    grating::String
-    wave::Array
-    fluxcube::Array
-    errscube::Array
-    header::FITSHeader
-    primheader::FITSHeader
-    linelist::DataFrame
-    lsf_fitter
-    z_init
-    ref_line
-    function MIRICube(filepath::String, grating::String;
-        linelist_path=joinpath(datapath, "neblines.dat"),
-        lsf_file_path=joinpath(datapath, "jwst_miri_$(grating)_disp.fits"),
-        z_init=0, reference_line=:OIII_5007)
-        linelist = load_neblines(linelist_path)
-        ddict = load_fits_cube(filepath)
-        ddict = convert_ergscms_Å_units(ddict, instrument="NIRSpec")
-        wave = ustrip.(ddict[:Wave])
-        fluxcube = ustrip.(ddict[:Data])
-        errscube = ustrip.(ddict[:Errs])
-        header = ddict[:Header]
-        primheader = ddict[:Primheader]
-        itp = get_resolving_power("NIRSpec", setting=grating)
-        new(grating, wave, fluxcube, errscube, header, primheader, 
-            linelist, itp, z_init, reference_line)
-    end
-end
-
-
-"""    MUSECube(filepath; linelist_path)
-"""
-mutable struct MUSECube <: AbstractSpectralCube
-    setting::String
-    resol_fit_degree::Int
-    header::FITSIO.FITSHeader
-    primheader::FITSIO.FITSHeader
-    linelist::DataFrame
-    lsf_fitter
-    function MUSECube(filepath::String;
-                      linelist_path::String=joinpath(datapath, "neblines.dat"),
-                      lsf_polynomium_degree::Int=3,
-                      )
-
-        ddict = load_fits_cube(filepath, "r")
-        linelist = load_neblines(linelist_path)
-        ddict = convert_ergscms_Å_units(ddict, "MUSE")
-        wave = ustrip.(ddict[:Wave])
-        fluxcube = ustrip.(ddict[:Data])
-        errscube = ustrip.(ddict[:Errs])
-        header = ddict[:Header]
-        primheader = ddict[:Primheader]
-        itp = get_resolving_power("NIRSpec", setting=lsf_polynomium_degree)
-    end
-end
-
-### === End of various instrument data structs. This should probably be extracted out into a module
-### of its own some time. 
-
-"""    estimate_redshift_reference_line_flux(cube; xrange=nothing, yrange=nothing)
+"""    
+    estimate_redshift_reference_line_flux(cube; kwargs...)
 Estimate the redshift and line flux of a line given data and line ID.
+This requires a reasonably accurate initial guess to be set, but 
+gives a more accurate estimate. 
+
+# Arguments
+- `cube::AbstractSpectralCube`: Datacube in question.
+
+# Keywords
+- `xrange::UnitRange`: the range of x coordinates to extract spectrum from; 
+  defaults to `nothing`, which includes everything.
+- `yrange::UnitRange`: Same as `xrange`, but in the y direction.
+- `mask::Array`: Mask determining spaxels to extract spectrum from; takes 
+  precedence over `xrange` and `yrange`. 
+
+# Returns
+- Tuple{Float64, Float64}: Tuple containing the estimated values of line flux
+  (as fraction of Hα) and redshift.
 """
 function estimate_redshift_reference_line_flux(spec_cube; xrange=nothing, yrange=nothing, mask=nothing)
     wave = spec_cube.wave
@@ -243,38 +132,9 @@ function estimate_redshift_reference_line_flux(spec_cube; xrange=nothing, yrange
 end 
 
 
-#= """    load_fits_cube(inpath) =#
-#= Convenience function to load a FITS cube and return a Dict of various, sometimes useful, =#
-#= quantities read or derived from the cube. =#
-#= ## Returns =#
-#= - Dict containing wave array, data and error cube, and headers from the primary HDU and =#
-#=   first extension from the data file. =#
-#= """ =#
-#= function load_fits_cube(inpath::String)::Dict{Symbol, Any} =#
-#=     fitsfile = FITS(inpath, "r") =#
-#=     header = read_header(fitsfile[2]) =#
-#=     primary = read_header(fitsfile[1]) =#
-#=     data = read(fitsfile[2]) =#
-#=     errs = read(fitsfile[3]) =#
-#=     naxis3 = header["NAXIS3"] =#
-#=     crval3 = header["CRVAL3"] =#
-#=     if haskey(header, "CDELT3") =#
-#=         cdelt3 = header["CDELT3"] =#
-#=     elseif haskey(header, "CD3_3") =#
-#=         cdelt3 = header["CD3_3"] =#
-#=     else =#
-#=         println("Could not find spectral axis keywords in FITS header") =#
-#=     end =#
-#=     waves = crval3 .+ cdelt3 .* (0:naxis3-1) =#
-#=     out = Dict(:Wave => waves, :Data => data, :Errs => errs, =#
-#=                :Header => header, :Primheader => primary) =#
-#=     return out =#
-#= end =#
-
-
 """    get_resolving_power(instrument[, setting=nothing])
 This function figures out which instrument we are working with, and calls the relevant
-instrument-specific function
+instrument-specific function.
 """
 function get_resolving_power(instrument::String; setting=nothing::Any)
     if lowercase(instrument) == "nirspec"
@@ -289,11 +149,15 @@ end
 """     get_resolving_power_nirspec(grating[, calib_path="../static_data/"])
 This function assumes that the FITS files containing the NIRSpec grating resolving power
 are named "jwst_nirspec_[grating]_disp.fits", as fetched from the official JDox.
-## Returns
-- A callable `Interpolations.Extrapolation` objects which returns the linearly interpolated
-  resolving power at the wavelength passed to it.
+# Arguments
+- `grating::String`: The name of the grating used.
+# Keywords
+- `calib_path::String`: Path to the location of the calibration data, defaults to  the data folder installed with the package.
+# Returns
+- A callable `Interpolations.Extrapolation` objects which returns the linearly 
+  interpolated resolving power at the wavelength passed to it.
 """
-function get_resolving_power_nirspec(grating::String; calib_path=datapath)  #"./static_data/")
+function get_resolving_power_nirspec(grating::String; calib_path=datapath) 
     lsffilename = "jwst_nirspec_$(grating)_disp.fits"
     @debug "Path to LSF file: " calib_path * lsffilename
     fitsfile = FITS(joinpath(calib_path, lsffilename))
@@ -350,9 +214,9 @@ function convert_ergscms_Å_units(datadict::Dict; instrument="NIRSpec")
 end
 
 
-"""    toggle_fnu_flam()
+"""    toggle_fnu_flam(flux, wave, verbose=false::Bool)
 Converts fnu data to flam units, and vice versa.
-Input must be Unitful™ (i.e., Quantities).
+Input must be Unitful™ Quantities.
 """
 function toggle_fnu_flam(influx, wave; verbose=false::Bool)::Array
     # Broadcast spectrum or cube. A bit clumsy but works for now.
@@ -391,41 +255,89 @@ function toggle_fnu_flam(influx, wave; verbose=false::Bool)::Array
 end
 
 
-"""    make_spectrum_from_cutout()
-Convert fnu data to flam units, and vice versa. Input must be Unitful™ (i.e., Quantities).
+"""    
+    make_spectrum_from_cutout(cube; kwargs...)
+
+Extracts a spectrum either from rectangular pixel ranges or from a segment
+defined by a boolean/bitwise mask. If the mask is instead an array, the
+normalized number will be used as weights. This function is user-facing, but also used 
+internally by `CubeFitter`; passing `format_nice=true` will give the nicer output for 
+the user.
+
+# Arguments
+- `cube::AbstractSpectralCube`: The datacube to work on.
+
+# Keywords
+- `xrange`, `yrange`: Pixel coordinate ranges defining a rectangle from which to 
+  extract the spectrum; both default to `nothing`.
+- `mask::BitMatrix=nothing`: Alternative to `xrange` and `yrange`, a boolean mask 
+  determining spaxels to include when extracting spectrum. Must match the spatial 
+  dimensions of the cube. If given, yrange and xrange are ignored.
+- `weights::Array{Float}=nothing`: Weights to give the spaxels when extracting spectrum. 
+  If not given, the spaxels in the mask/range will all be weighed equally.
+- `format_nice::Bool=false`
+
+# Returns
+- `Tuple{Vector{Float64}, Vector{Float64}}`: If `format_nice` is set to `false`, returns s  Tuple of two vectors containing the fluxes and errors of the extracted spectrum. 
+- `DataFrames.DataFrame`: Pandas- or R-like DataFrame containing wave, flux and errors of
+  the spectrum if `format_nice` is set to `true`
 """
-function make_spectrum_from_cutout(cube; xrange=nothing, yrange=nothing, mask=nothing)
-    # XXX: Looks like this works now! Now I just need to work out how to 
-    # make it not set NaNs everywhere when fitting from a frag map...
+function make_spectrum_from_cutout(cube; xrange=nothing, yrange=nothing, mask=nothing, weights=nothing, format_nice=false)
     if xrange isa Nothing; xrange = (1:size(cube.fluxcube)[1]); end
     if yrange isa Nothing; yrange = (1:size(cube.fluxcube)[2]); end
-    if !(mask isa Nothing)
-        cutout_spec = cube.fluxcube[mask, :]
-        cutout_errs = cube.errscube[mask, :]
-        slice = cutout_spec[:, 1]
-        num_spaxels = length(slice)
-        spec_init = nanmean(cutout_spec, dim=(1))
-        errs_init = sqrt.(nansum(cutout_errs.^2, dim=(1))) / num_spaxels
-    else
-        cutout_spec = cube.fluxcube[xrange, yrange, :]
-        cutout_errs = cube.errscube[xrange, yrange, :]
-        slice = cutout_spec[:,:,1]
-        num_spaxels = length(slice)
-        if num_spaxels == 1  #1
-            spec_init = vec(cutout_spec)
-            errs_init = vec(cutout_errs)
-        else
-            spec_init = nanmean(cutout_spec, dim=(1,2))
-            errs_init = sqrt.(nansum(cutout_errs.^2, dim=(1,2))) / num_spaxels
-        end
+    if !(mask isa BitMatrix)
+      if !(weights isa Nothing)
+        @warn "Weights are given explicitly but also implicitly as a mask with numerical values.
+        Using the explicitly given weights, using the mask just as a mask."
+      end
+      if !(mask isa Nothing)
+        weights = mask |> copy
+        mask = ((mask .!= 0) .& .!(mask .|> isnan))
+      end
     end
-    return spec_init, errs_init
+    if !(weights isa Nothing)
+      cube.fluxcube .*= weights
+      cube.errscube .*= weights
+    end
+    if !(mask isa Nothing)
+      cutout_spec = cube.fluxcube[mask, :]
+      cutout_errs = cube.errscube[mask, :]
+      slice = cutout_spec[:, 1]
+      num_spaxels = length(slice)
+      spec_init = nanmean(cutout_spec, dim=(1))
+      errs_init = sqrt.(nansum(cutout_errs.^2, dim=(1))) / num_spaxels
+    else
+      cutout_spec = cube.fluxcube[xrange, yrange, :]
+      cutout_errs = cube.errscube[xrange, yrange, :]
+      slice = cutout_spec[:,:,1]
+      num_spaxels = length(slice)
+      if num_spaxels == 1  #1
+        spec_init = vec(cutout_spec)
+        errs_init = vec(cutout_errs)
+      else
+        spec_init = nanmean(cutout_spec, dim=(1,2))
+        errs_init = sqrt.(nansum(cutout_errs.^2, dim=(1,2))) / num_spaxels
+      end
+    end
+    return if format_nice
+      OrderedDict(
+        :wave => cube.wave, 
+        :flam => spec_init,
+        :dflam => errs_init,
+      ) |> DataFrame
+    else
+      spec_init, errs_init
+    end
+    # if format_nice:
+    # end
+    # return spec_init, errs_init
 end
 
 
 """    fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing)
 
-Extract a subcube as a spectrum, and pass it to the 1D spectrum fitter. 
+Extract a spatially rectangular subcube defined from a range in x- and y coordinates, 
+coadd it as a spectrum, and pass it to the 1D spectrum fitter. 
 
 This is the main workhorse of the user-facing functions in this package. Given any two
 pixel ranges, it extrancts the spectrum and error vector from the cube in these ranges. If
@@ -446,6 +358,10 @@ Keyword arguments:
 - `xrange::UnitRange{Int}`: A range (e.g. `2:3`) of x-axis pixel coordinates to include in
   the extracted spectrum.
 - `yrange::UnitRange{Int}`: Same as `xrange`, but for y-axis coordinates.
+- `broad_component::Bool`: Whether to include a second, broad, component.
+- `line_selection::AbstractArray{Union{String,Symbol}}`: Lines to fit.
+- `kinematics_from::AbstractArray{Union{String,Symbol}}`: Lines on which to base kinematic fit.
+- `min_snr::Number`: SNR limit for for numeric flux estimate to discard chunk.
 
 # Returns
 - `Dict`: A dict containing wave, spectrum, errors, fit result and fit statistics.
@@ -461,7 +377,7 @@ julia> fit_spectrum_from_subcube(cube, xrange=33:33, yrange=44:44)
 ```
 """
 function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_component=false,
-    line_selection=nothing, kinematics_from=nothing, min_snr=0.5, mask=nothing)
+    line_selection=nothing, kinematics_from=nothing, min_snr=0.5)::Dict
     if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
     if isa(yrange, Nothing); yrange=range(1, size(cube.fluxcube)[2]); end
     wave_init = cube.wave
@@ -478,7 +394,7 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
     # @debug "Made lines mask for $xrange, $yrange !"
     lwave, lspec, lerrs = goodwave[idx], goodspec[idx], gooderrs[idx]
     # @debug "Before and after line masking: " length(goodwave), length(lwave)
-    if length(lwave) == 0; return NaN; end
+    if length(lwave) == 0; println("`fit_spectrum_from_subcube`: No wavelengths not masked") ;return NaN; end
     lmod = build_model(cube, xrange=xrange, yrange=yrange, dom_init=Domain(lwave),
         broad_component=broad_component, line_selection=line_selection, kinematics_from=kinematics_from, min_snr=min_snr)
     lmeas = Measures(Domain(lwave), lspec, lerrs)
@@ -514,6 +430,39 @@ function fit_spectrum_from_subcube(cube; xrange=nothing, yrange=nothing, broad_c
 end
 
 
+"""    fit_spectrum_from_mask(cube mask; kwargs...)
+
+Extract a subcube defined by a spaxel mask (optionally with weights) as a spectrum, 
+and pass it to the 1D spectrum fitter. 
+
+This is the other version of the main workhorse of the user-facing functions in 
+this package. Instead of spaxel ranges, it uses a user-provided mask to define , from 
+which spaxels the spectrum is extracted; but otherwise works exactly like 
+`fit_spectrum_from_subcube`.
+
+For a convenient wrapper around this function which fits an entire cube spaxel-by-spaxel,
+see `fit_cube`.
+
+# Arguments
+Required arguments:
+- `cube::AbstractSpectralCube`: The spectral cube object to fit. Must be one of the
+  instrument-specific types of struct defined by this package.
+- `mask::BitMatrix`: Mask to use to extract spectrum.
+Keyword arguments:
+- `broad_component::Bool`: Whether to include a second, broad, component.
+- `line_selection::AbstractArray{Union{String,Symbol}}`: Lines to fit.
+- `kinematics_from::AbstractArray{Union{String,Symbol}}`: Lines on which to base kinematic fit.
+- `min_snr::Number`: SNR limit for for numeric flux estimate to discard chunk.
+
+# Returns
+- `Dict`: A dict containing wave, spectrum, errors, fit result and fit statistics.
+
+# Examples
+Extract and fit spectrum from spaxels defined by the mask `mask`:
+```julia-repl
+julia> fitdict = fit_spectrum_from_mask(cube, mask)
+```
+"""
 function fit_spectrum_from_mask(cube, mask; broad_component=false, line_selection=nothing, 
     kinematics_from=nothing, min_snr=0.5)
     # if isa(xrange, Nothing); xrange=range(1, size(cube.fluxcube)[1]); end
@@ -568,6 +517,7 @@ function fit_spectrum_from_mask(cube, mask; broad_component=false, line_selectio
     end 
 end
 
+
 function makeresultdict(cube; broad_component=false, lines_select=nothing)
     @debug "Making output dict"
     xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
@@ -578,9 +528,6 @@ function makeresultdict(cube; broad_component=false, lines_select=nothing)
     slices_dict = Dict()
     slices_dict[:refline] = cube.ref_line
     slices_dict[:header] = cube.header
-    # slices_dict[:primhead] = cube.primheader
-    # slices_dict[:primhead]["REFLINE"] = cube.ref_line
-    # set_comment!(slices_dict[:primhead], "REFLINE", "Reference line used for line fitting.")
     for scomp in neblines.name
         if ! (Symbol(scomp) in lines_select); continue; end
         lamvac = neblines[neblines.name .== scomp, :lamvac][1]
@@ -613,30 +560,39 @@ function makeresultdict(cube; broad_component=false, lines_select=nothing)
 end
 
 
-"""    fit_cube(cube; broad_component=false, lines_selection=nothing, kinematics_from_lines=nothing, min_snr=1.0)
-Fit the entire cube spaxel-by-spaxel.
+"""    
+    fit_cube(cube; kwargs...)
+Fit the entire cube spaxel-by-spaxel or segment-by-segment.
 
 This is a convenience function to perform that one action we want to perform 90% of the time.
 Still, there are a few options to tweak:
 
 # Arguments
-Required arguments:
 - `cube::AbstractSpectralCube`: The SpectralCube object to fit.
-Optional arguments:
-- `broad_component::Bool`: Wether or not to include an second kinematic component in the fit. 
-- `line_selection::List{Symbol}`: A list of lines to fit. Defaults to all lines in the loaded line list which fall 
-  within the wavelength range of the dataset.
-- `kinematics_from_lines::List{Symbol}`: List of names of lines on which to base the kinematc fits. Other lines will be
-  fit with locked kinematics, assuming they share the same properties as the ones in this list, allowing only the flux to
-  vary.
-- `min_snr::Number`: Where the numerically estimated S/N ratio per spaxel is below this value, the line will not be included 
-  in the fit for this line, and the value set to NaN.
-- `fragmap::Array`: Optional fragmentation map. If passed, an average will be made per fragment instead of a measurement for each spaxel.
+
+# Keywords 
+- `broad_component::Bool`: Wether or not to include a second kinematic component in the fit.
+- `min_snr::Float`: Where the numerically estimated S/N ratio per spaxel is below this 
+  value, the line will not be included in the fit for this line, and the value set to NaN.
+- `line_selection::List{Symbol}`: A list of lines to fit. Defaults to all lines in the 
+  loaded line list which fall within the wavelength range of the dataset.
+- `kinematics_from_lines::List{Symbol}`: List of names of lines on which to base the 
+  kinematc fits. Other lines will be fit with locked kinematics, assuming they share the 
+  same properties as the ones in this list, allowing only the flux to vary.
+  *NB*: Blended lines (e.g. [O II]λλ3727,29 or Hα + [N II]λλ6548,84) should be included 
+  in this selection to ensure they are fitted simultaneously.
+- `segmap::Array{Int}`: Optional segmentation map. If passed, an average will be made per 
+  segment instead of a measurement for each spaxel.
+- `window_kms::Float`: The width (in km/s) of the window to integrate over to find numerical 
+  fluxes. Can be important for neighboring lines.
+
+# Returns
+- Dict: Dictionary containing maps of fluxes, kinematic properties, and fit statistics.
 """
-function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1.0, kinematics_from_lines=nothing, fragmap=nothing)
-    xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
+function fit_cube(cube; broad_component=false, min_snr=1.0, line_selection=nothing, kinematics_from_lines=nothing, segmap=nothing, window_kms=1000.0)
+    # xsize, ysize = size(cube.fluxcube)[1], size(cube.fluxcube)[2]
     slices_dict = makeresultdict(cube, broad_component=broad_component)
-    user_fragmap = fragmap
+    user_segmap = segmap
 
     if kinematics_from_lines isa Nothing
         model_lines = line_selection
@@ -644,23 +600,27 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
         model_lines = kinematics_from_lines
     end
 
-    if user_fragmap isa Nothing
-        fragmap = reshape(collect(1:length(cube.fluxcube[:,:,1])), size(cube.fluxcube)[1:end-1])
+    if user_segmap isa Nothing
+        # Make every spaxel a "segment"
+        segmap = reshape(collect(1:length(cube.fluxcube[:,:,1])), size(cube.fluxcube)[1:end-1])
     else 
-        fragmap = user_fragmap
+        # Use user provided segmentation map
+        segmap = user_segmap
     end
 
     @debug "Made slices_dict"
 
-    @track for f in (fragmap |> unique |> sort)
-        thismask = fragmap .== f
-        print("Fitting fragment No. $f with $(thismask |> sum) spaxels \r")
+    @track for f in (segmap |> unique |> sort)
+        thismask = segmap .== f
+        print("Fitting segment No. $f with $(thismask |> sum) spaxels \r")
         numnan = count(isnan.(cube.fluxcube[thismask, :]))
         testspec, testerr = make_spectrum_from_cutout(cube; mask=thismask)
         nanratio = count(isnan.(testspec)) / length(testspec)
         if nanratio > 0.5
+            # println("ratio of nans  $nanratio  in segment $f                 ")
             continue
         end
+        # println("There were $badcount empty segments out of $(segmap |> unique |> count) in total")
         fitdict = fit_spectrum_from_mask(
             cube, thismask; broad_component=broad_component, line_selection=model_lines)
         @debug "What's a fitdict anyway?" fitdict typeof(fitdict)
@@ -681,7 +641,7 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
                     cube, thismask; broad_component=broad_component, line_selection=[l],
                     kinematics_from=fitdict[:results], min_snr=min_snr)
                 # Do not fail gracefully, just flip the table and move on.
-                # if !(outdict isa Dict); println("Failed fragment $f with $(count(thismask)) spaxels"); continue; end
+                # if !(outdict isa Dict); println("Failed segment $f with $(count(thismask)) spaxels"); continue; end
                 if !(outdict isa Dict); continue; end
                 if !(l in outdict[:results] |> keys); continue; end
                 oo = outdict[:results][l]
@@ -691,28 +651,31 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
         fitdict[:linesdict] = linesdict
         fill_in_fit_values!(slices_dict, fitdict, mask=thismask)
     end 
-    mom0, mom1, mom2 = calculate_moments(cube)
-    if !(user_fragmap isa Nothing)
-        mom0 = mean_by_fragmap(mom0 .|> value, user_fragmap, errs=mom0 .|> uncertainty)
-        mom1 = mean_by_fragmap(mom1 .|> value, user_fragmap, errs=mom1 .|> uncertainty)
-        mom2 = mean_by_fragmap(mom2 .|> value, user_fragmap, errs=mom2 .|> uncertainty)
+    mom0, mom1, mom2 = calculate_moments(cube; window_kms=window_kms |> float)
+    if !(user_segmap isa Nothing)
+        mom0 = mean_by_segmap(mom0 .|> value, user_segmap, errs=mom0 .|> uncertainty)
+        mom1 = mean_by_segmap(mom1 .|> value, user_segmap, errs=mom1 .|> uncertainty)
+        mom2 = mean_by_segmap(mom2 .|> value, user_segmap, errs=mom2 .|> uncertainty)
     end
     # Moments come with both signal and noise now
     slices_dict[:mom0] = stack([value.(mom0), uncertainty.(mom0)], dims=3)
     slices_dict[:mom1] = stack([value.(mom1), uncertainty.(mom1)], dims=3)
     slices_dict[:mom2] = stack([value.(mom2), uncertainty.(mom2)], dims=3)
     # Remove empty slices
+    println(slices_dict |> keys)
+    println("Entries in the slices dict before pruning: $(slices_dict |> keys |> length)")
     for s in slices_dict |> keys
         if !(slices_dict[s] isa Array); continue; end
         slice = slices_dict[s][:,:,1]
+        println("for slice $s, there were $(count(isnan.(slice))) nans out of $(length(slice))")
         if count(isnan.(slice)) == length(slice)
             delete!(slices_dict, s)
             continue
         end
         if !(String(s) in cube.linelist[!, "name"]); continue; end
-        m0, m1, m2 = calculate_moments(cube, refline=s)
-        if !(user_fragmap isa Nothing)
-            m0 = mean_by_fragmap(m0 .|> value, user_fragmap, errs=m0 .|> uncertainty)
+        m0, m1, m2 = calculate_moments(cube, refline=s, window_kms=window_kms)
+        if !(user_segmap isa Nothing)
+            m0 = mean_by_segmap(m0 .|> value, user_segmap, errs=m0 .|> uncertainty)
         end
         m0v, m0e = m0 .|> value, m0 .|> uncertainty
         m0s = stack([m0v,m0e], dims=3)
@@ -722,33 +685,41 @@ function fit_cube(cube; broad_component=false, line_selection=nothing, min_snr=1
 end 
 
 
-"""    build_model(cube; xrange=nothing, yrange=nothing, min_snr=1.5, fwhm_int=100, dom_init=nothing)
+"""    
+    build_model(cube; kwargs...)
+
 Builds the `GModelFit.Model` object necessary for fitting the lines.
 The model assumes that each line is described as a single Gaussian profile, with a shared
 `redshift` and velocity width `fwhm`, while their individual fluxes are left as free parameters
 (including lines which actually have fixed line ratios, which might not have that in the ). 
+
 # Arguments
-Required arguments:
 - `cube::AbstractSpectralCube`: A Domain object containing the wavelength range on which
   the model should be defined.
-Optional arguments:
-- `xrange::UnitRange{Int}`: The range of x-axis pixels to include in the fit; defaults to all.
-- `yrange::UnitRange{Int}`: The range of y-axis pixels to include in the fit; defaults to all.
-- `min_snr::Float64`: Minimum estimated SNR for a line to be included in the fit. Defaults to
-  1.5. This is the SNR that is estimated numerically; set it to 0 to make sure no lines are
-  dropped when building the model.
-- `fwhm_int::Float64`: The initial guess of FWHM of the line, given in km/s. Defaults to 100.
-- `dom_init::GModelFit.Domain`: For finer control of which wavelength ranges can be included in
-  the fit, pass a domain (will default to the full wl range in the cube otherwise).
-  This is the maximum allowed domain to include, parts of it might still be excluded by the function.
-- `num_components::Int`: The number of kinematic components to include in the model.
-  So far, up to 2 is supported.
+
+# Keywords
+- `xrange::UnitRange{Int}`: Range of x-axis pixels to include in the fit; defaults to all.
+- `yrange::UnitRange{Int}`: Range of y-axis pixels to include in the fit; defaults to all.
+- `mask::Array`: Mask to extract spectrum from, alternative to `xrange` and `yrange`. 
+  The `mask` takes precedence over `xrange` and `yrange`.
+- `min_snr::Float64`: Minimum estimated SNR for a line to be included in the fit. Defaults 
+  to 1.5. This is the SNR that is estimated numerically; set it to 0 to make sure no lines 
+  are dropped when building the model.
+- `fwhm_int::Float64`: The initial guess of FWHM of the line in km/s. Defaults to 100.
+- `dom_init::GModelFit.Domain`: For finer control of which wavelength ranges can be included
+  in the fit, pass a domain (will default to the full wl range in the cube otherwise). This 
+  is the maximum allowed domain to include, parts of it might still be excluded by the function.
+- `broad_component::Bool`: Whether to include a second, broad component in the model.
+  So far, only up to 2 components is supported.
+- `line_selection::Vector{Symbol}`: List of lines to fit; defaults to all the lines in the 
+  loaded line list which fall inside the wavelength range of the data.
+
 # Returns
 - `model::GModelFit.Model`: The model containing the prescribed lines. The Reference line has
   norm=1., and the others are scaled according to the values of `foverha` given in the line list
   input file.
 """
-function build_model(cube; xrange=nothing, yrange=nothing, mask=nothin, min_snr=0.5, fwhm_int=100,
+function build_model(cube; xrange=nothing, yrange=nothing, mask=nothing, min_snr=0.5, fwhm_int=100,
     dom_init=nothing, broad_component=false, line_selection=nothing, kinematics_from=nothing, lock_kinematics=false)
     redss = (1. + cube.z_init)  # Just for convenience
     wave = cube.wave
@@ -898,12 +869,13 @@ Computes moments of a flux slab with associated wavelengths.
 Computes the 0th, 1st and 2nd moments of a spectral chunk (a line map) in one or more
 pixels. Errors/uncertainties are not included in this computation.
 # Arguments
-Required arguments:
 - `cube::AbstractSpectralCube`: Datacube struct to be computed.
-Optional arguments:
+
+# Keywords
 - `refline::Symbol`: The line to integrate, if not the default one set in the `cube`.
 - `window_kms::Float64`: Width of the spectroscopic range included in the calculation,
   given in km/s.
+
 # Returns
 - A tuple of three 2D arrays (images) of the moments mapped to each spatial pixel.
 """
@@ -947,6 +919,8 @@ function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
 end 
 
 
+# Uh, these two look like they need to be cleaned out, but don't have time now. 
+# My suspicion is they aren't actually used anywhere.
 function moments(wave::AbstractFloat, flux::AbstractFloat, err::AbstractFloat)
     flux = flux .± err
     mom0, mom1, mom2 = moments(wave, flux)
@@ -965,7 +939,7 @@ end
 
 """    make_lines_mask(mod; window_width_kms=1000, plot_it=false)
 Creates a mask which keeps data in a window around each line in the model, and discards
-the rest. The window width is customizable.
+the rest. The window width is customizable. Mainly used internally in the package.
 ## Input
 - `mod::GModelFit.Model`: The model with the lines already defined.
 ## Optional input
@@ -1002,7 +976,8 @@ end
 
 """    nanmask10(flux, dflux)
 Removes wave/velocity bins in which wither spec or errs are NaN, or where either is == 0.
-The `flux` and `dflux` (error) arrays must have the same size.
+The `flux` and `dflux` (error) arrays must have the same size. Internal function, not meant
+to be user facing.
 # Arguments:
 - `flux::Array{Float64}` - the flux (flux density) array.
 - `dflux::Array{Float64}` - the standard errors to the flux
@@ -1128,6 +1103,9 @@ end
 
 """    write_spectral_cube_to_fits(filepath, spectralcube)
 Write a subtype of AbstractSpectralCube to a FITS file.
+# Arguments
+- `filepath::String`: Path to save the cube to.
+- `spectralcube::AbstractSpectralCube`: The datacube to save.
 """
 function write_spectral_cube_to_fits(filepath::String, spectralcube::NIRSpecCube)
     # TODO: Make possible to choose units. 
@@ -1169,6 +1147,11 @@ end
 """    write_maps_to_fits(filepath, mapsdict)
 Write a dictionary of line maps as output by the cube fitter function to a multi-
 extension FITS file. NEW VERSION
+# Arguments
+- `filepath::String`: Path to save the file to.
+- `mapsdict::Dict`: Dictionary of the type that is output from `fit_cube`.
+# Returns
+- `nothing`
 """
 function write_maps_to_fits(filepath::String, mapsdict::Dict)
   f = FITS(filepath, "w")
@@ -1187,6 +1170,13 @@ function write_maps_to_fits(filepath::String, mapsdict::Dict)
   return nothing
 end 
 
+
+"""    load_slices_dict(filepath::String)
+Load in a FITS file of "slices" saved by the `write_maps_to_fits` function.
+Convenient e.g. for inspection.
+# Arguments
+- `filepath::String`: Path to the file to open.
+"""
 function load_slices_dict(filepath::String)
   f = FITS(filepath, "r", extendedparser=true)
   outdict = Dict()
@@ -1203,14 +1193,17 @@ function load_slices_dict(filepath::String)
   return outdict
 end
 
+
 """    quicklook_slice(slicedict, name; what="data", norm="sqrt", colorlimits=nothing)
+
 Quick and convenient visualization of slices output fromthe `fit_cube()` function.
+
 # Parameters
 - `slicedict::Dict`: The dictionary containing the data slices
 - `name::Symbol`: Key for the slice to visualize
 # Optional parameters
-- `norm`: Function to normalize/color scale the data. Must be callable with a single argument.
-  E.g., `identity`, `sqrt`, `log10`, or similar. 
+- `norm`: Function to normalize/color scale the data. Must be callable with a single 
+  argument. E.g., `identity`, `sqrt`, `log10`, or similar.
 - `what::Symbol`: One of wither `:data`, `:errs`, `:snr`, `:numdata`, or `:numerrs`.
 - `cmap::Symbol`: The colormap to use with `Plots.heatmap()`.
 - `colorlimits::Tuple`: Tuple of (min, max) color cut values.
@@ -1230,6 +1223,7 @@ end
 
 
 """    quicklook_fit_result_dict(indict)
+Plots of the results of a fit of a single spectrum. 
 # Parameters
 - `indict::Dict`: The output dictionary of `fit_spectrum_from_subcube`
 """
@@ -1261,9 +1255,9 @@ end
 
 
 ###=============================================================================
-#   Fragmentation map and Voronoi binning related helper functions
+#   Segmentation map and Voronoi binning related helper functions
 #
-"""    mean_by_fragmap(data, fragmap; errs=nothing)
+"""    mean_by_segmap(data, segmap; errs=nothing)
 
 Given a 2D array and a map of spatial bins of the same size, outputs a new array 
 with each bin filled with the mean of the data witin it. Is NaN/missing-aware, and 
@@ -1271,19 +1265,20 @@ optionally takes an array of standard errors which is propagated in the standard
 
 For bins of 1 pixel size, this is just the identity operator. 
 """
-function mean_by_fragmap(data, fragmap; errs=nothing)
+function mean_by_segmap(data, segmap; errs=nothing)
     if !(errs isa Nothing)
-        data = data .± errs
+        data = data .±ᵤ errs
+        # data = data .± errs
     end
     outmap = similar(data)
-    for i in (fragmap |> unique |> sort)
-        fragmask = fragmap .== i
-        spaxs = count(fragmask)
-        print("`mean_by_fragmap` processing fragment # $i with $spaxs spaxels \r")
-        dpoints = vec(data[fragmask])
-        outmap[fragmap.==i] .= nanmean(dpoints)
+    for i in (segmap |> unique |> sort)
+        segmask = segmap .== i
+        spaxs = count(segmask)
+        print("`mean_by_segmap` processing segment # $i with $spaxs spaxels \r")
+        dpoints = vec(data[segmask])
+        outmap[segmap.==i] .= nanmean(dpoints)
     end
-    return outmap
+    return outmap .|> Measurements.Measurement
 end
 
 
@@ -1297,6 +1292,6 @@ function voronoi_bin_slice(::Any)
   return nothing
 end
 
-export voronoi_bin_slice, mean_by_fragmap
+export voronoi_bin_slice, mean_by_segmap
 
 end  # End module

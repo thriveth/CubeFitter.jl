@@ -10,87 +10,30 @@ using Photometry
 using Interpolations
 # using PyPlot
 
-# include("./SpecHelpers.jl")
-### This part is only relevant for my Sunburst NIRSpec project
-# Set up the paths and filenames necessary to do the thing.
-in_path = "../Products/NIRSpec/science-ready/"
-out_path = "../Products/ContSub/"
-
-pathsdict = Dict(
-    "pos1_blu" => in_path * "sunburst-P1-sigmaclipped-s3d-g140h.fits", 
-    "pos1_red" => in_path * "sunburst-P1-sigmaclipped-s3d-g235h.fits", 
-    "pos2_blu" => in_path * "sunburst-P2-sigmaclipped-s3d-g140h.fits", 
-    "pos2_red" => in_path * "sunburst-P2-sigmaclipped-s3d-g235h.fits", 
-    "pos3_blu" => in_path * "sunburst-P3-sigmaclipped-s3d-g140h.fits", 
-    "pos3_red" => in_path * "sunburst-P3-sigmaclipped-s3d-g235h.fits")
-
-outpaths = Dict(
-    "pos1_blu" => out_path * "P1-contsub-s3d-g140h.fits", 
-    "pos1_red" => out_path * "P1-contsub-s3d-g235h.fits", 
-    "pos2_blu" => out_path * "P2-contsub-s3d-g140h.fits", 
-    "pos2_red" => out_path * "P2-contsub-s3d-g235h.fits", 
-    "pos3_blu" => out_path * "P3-contsub-s3d-g140h.fits", 
-    "pos3_red" => out_path * "P3-contsub-s3d-g235h.fits")
-### End of Sunburst-NIRSpec-only part
-
-
-"""    load_fits_cube_contsub()
-Convenience function for this context only. Loads an IFU datacube from a FITS file,
-returns a dict of the essentials.
-## Input:
-- `inpath::String`: path to the file to open.
-## Returns:
-- `out::Dict`: A dictionary of datacube, errorcube, wavelength vector,
-  FITS primary and first extension header.
-"""
-function load_fits_cube_contsub(inpath::String)::Dict
-    # TODO: Phase this out! 
-    fitsfile = FITS(inpath, "r")
-    header = read_header(fitsfile[2])
-    primary = read_header(fitsfile[1])
-    data = read(fitsfile[2])
-    errs = read(fitsfile[3])
-
-    naxis1 = header["NAXIS1"]
-    naxis2 = header["NAXIS2"]
-    naxis3 = header["NAXIS3"]
-    crval3 = header["CRVAL3"]
-
-    if haskey(header, "CDELT3")
-        cdelt3 = header["CDELT3"]
-    elseif haskey(header, "CD3_3")
-        cdelt3 = header["CD3_3"]
-    else
-        println("Could not find spectral axis keywords in FITS header")
-    end
-
-    waves = crval3 .+ cdelt3 .* (0:naxis3-1)
-
-    out = Dict(
-        "Wave" => waves,
-        "Data" => data,
-        "Errs" => errs,
-        "Header" => header,
-        "Primary header" => primary)
-
-    return out
-end
-
-
 """    cont_subt(incube::AbstractSpectralCube; ..)
+
 Leaner version of the cont_subt function. This functions does nothing else than
 continuum subtract the data cube and return the result. 
 ## Input
-- `incube::AbstractSpectralCube`: The 3D array containing the non-subtracted datacube. We are assuming that
-  it is... BLA BLA
+- `incube::AbstractSpectralCube`: The datacube (type `CubeFitter.AbstractSpectralCube`) containing the 
+  data to subtract.
+- `window_pix::Number`: Number of pixels (preferably odd number) to indluce in the running median kernel.
+- `velwidth::Number`: Velocity width to assume for each emission line, given in km/s.
+- `mask_lines::Bool`: Whether to mask out known emission lines before computing the running median.
+- `min_strength::Number`: The minimum strength of an emission line (relative to Hα in the line list) 
+  to be masked out before computing running median. This is ignored if `mask_lines` is set to `false`.
+- `fancy::Bool`: Whether or not to use experimental "fancy" continuum modeling method. 
+  At the moment, the "fancy" version is worse than the "simple" one and also slower, so don't use it.
 """
 function cont_subt(incube; 
-        #= TODO: Finish rewriting this thingie =#
+        # TODO: Rewrite to use cont_subt_spectrum for internals 
+        # to avoid duplication of code
         window_pix=51, 
         sigma_clip=true, clip_sigmas=3.,
-        velwidth=1000,  # km/s
+        velwidth=350,  # km/s
         mask_lines=false,
         min_strength=0.01,  # Fraction of Hα
+        fancy=false,
     )
     outcube = deepcopy(incube)
     inarray = outcube.fluxcube
@@ -119,90 +62,232 @@ function cont_subt(incube;
         for j in 1:naxis2
             @printf("Now continuum subtracting row %03d, col. %03d. \r", i, j)
             flush(stdout)
-            spec = inarray[i, j, :][mask]
-            #= Sigma clip the (possibly line-masked) spectrum =#
-            scwave = wave[mask]
-            scspec = deepcopy(spec)
-            scmask = trues(size(scwave))
-            scmask[abs.(scspec) .> nanmedian(scspec) + clip_sigmas .* nanstd(scspec)] .= 0
-            scmask[1] = scmask[end] = 1  # Must be included to allow interpolation
-            finalspec, finalwave = scspec[scmask], scwave[scmask]
-            #= scspec[abs.(spec) .> nanmedian(spec) + clip_sigmas .* nanstd(spec)] .= NaN =#
-            continuum = running_median(finalspec, window_pix, nan=:ignore)
-            ipl = LinearInterpolation(finalwave, continuum)
-            contsub_cube[i, j, :] = inarray[i, j, :] - ipl(wave)
+            if fancy
+                # Despite being fancy, this method is actually worse!
+                # But I keep it because it is good to have infrastructure that
+                # calls an external function, then can just rewrite the 
+                # external function.
+                specvec = inarray[i, j, :] |> deepcopy
+                inspec = DataFrame(Dict(:wave => wave, :flux => specvec))
+                mask = .~mask
+                mask .|= (specvec .|> isnan)
+                mask[1] = mask[end] = 0
+                outspec = subtract_continuum(inspec, mask; pix_window=window_pix,  sig_lim=clip_sigmas)
+                ipl = LinearInterpolation(wave,outspec[!, :continuum])(wave)
+            else
+                # Despite its simplicity, this method seems unreasonably good!
+                specvec = inarray[i, j, :] |> deepcopy
+                spec = inarray[i, j, :][mask]
+                #= Sigma clip the (possibly line-masked) spectrum =#
+                scwave = wave[mask]
+                scspec = deepcopy(spec)
+                scmask = trues(size(scwave))
+                scmask[abs.(scspec) .> nanmedian(scspec) + clip_sigmas .* nanstd(scspec)] .= 0
+                scmask[1] = scmask[end] = 1  # Must be included to allow interpolationc
+                finalspec, finalwave = scspec[scmask], scwave[scmask]
+                continuum = running_median(finalspec, window_pix, nan=:ignore)
+                ipl = LinearInterpolation(finalwave, continuum)(wave)
+            end
+            contsub_cube[i, j, :] = inarray[i, j, :] - ipl#(wave)
+            # contsub_cube[i, j, :] = ipl#(wave)  # DEBUG
         end
     end 
     outcube.fluxcube = contsub_cube
     return outcube
 end
 
+# function make_lines_mask(linelist, min_strength=0.01)
+# end
+#
+#
 
-""" Continuum subtract a FITS Datacube file, and optionally write the result to a new file.
+"""    cont_subt_spectrum(input_spectrum; kwargs...)
 
-This function contains the plumbing, or bookkeeping, or whatever you call it. For the actual
-subraction, it calls the function `cont_subt()`. This function is in turn called by
-`contsub_many()`.
-
-This function requires the datadicts to be populated with reasonable names and file paths.
-## Input
-- `inpath::String`: Path to the non-subtracted datacube file.
-## Optional input
-- `saveit::Bool`: Whether or not to save the generated output. For safety reasons, it is
-  set to `false` by default.
-- `outpath::String`: Path to the output file.
-  Default: `"continuum_subtracted.fits"`.
-- `clip_sigmas::Float64`: Continuum subtraction works on sigma clipped data. This argument
-  allows to customize how strong the clipping should be. Default value is `3`.
-- `window_pix::Int`: Pixel width of the rolling window in which the median is taken.
-  Default value is `51`. Odd numbers give better results.
-## Returns
-- `out::Dict`: Mainly for convenience, the function returns a `Dict` containing a continuum
-  subtracted data cube, an unaltered error cube, as well as FITS headers from both the primary
-  and the data extension of the input FITS file.
+`kwargs` are the same as input to `cont_subt`
+Expects the input spectrum to be a DataFram with columns :wave, :flux/:fnu/:flam, and :dflux/:dfnu/:dflam
 """
-function continuum_subtract_and_save(
-    inpath::String;
-    saveit=false::Bool,
-    outpath="continuum_subtracted.fits"::String,
-    clip_sigmas=3.::Float64,
-    window_pix=51::Int,
-    )::Dict
-    # This is just for convenience, if I want to define some shortcuts for some of the file names,
-    # making it easier to call the function interactively.
-    if inpath in keys(pathsdict)
-        datadict = load_fits_cube_contsub(pathsdict[inpath])
-    else 
-        datadict = load_fits_cube_contsub(inpath)
-    end 
-
-    contsubt = cont_subt(datadict["Data"], clip_sigmas=clip_sigmas, window_pix=window_pix)
-
-    if saveit == true
-        outfile = FITS(outpath, "w")
-        write(outfile, Float64[], header=datadict["Primary header"])
-        write(outfile, contsubt; header=datadict["Header"], name="SCI")
-        write(outfile, datadict["Errs"], header=datadict["Header"], name="ERR")
-        close(outfile)
+function cont_subt_spectrum(
+    inspec; 
+    linelist=nothing, window_pix=41, sigma_clip=true, clip_sigmas=3., velwidth=350,  # km/s
+    redshift=0.0, mask_lines=false, fancy=false, min_strength=0.02,  # Fraction of Hα 
+    )
+    if "flux" in inspec |> names 
+        flab, dflab, clab = :flux, :dflux, :cont
+    elseif "flam" in inspec |> names
+        flab, dflab, clab = :flam, :dflam, :contflam
+    else
+        flab, dflab, clab = :fnu, :dfnu, :contfnu
     end
-    datadict["Cont.subt."] = contsubt
-    return datadict
-end
-
-
-"""
-# Continuum subtract one or more files
-Continuum subtracts a a single file and save the result to a new file.
-"""
-function contsub_many(which="all"::String; saveit=false::Bool)
-    for (thing, inpath) in pathsdict
-        if which != "all"
-            if which != thing
+    # inspec.names = Symbol.(inspec.names)
+    outspec = inspec |> deepcopy
+    # rename!(outspec, Symbol.(inspec |> names))
+    rename!(string, outspec)
+    # return outspec
+    wave = inspec[!,:wave]
+    mask = trues(inspec[!, 1] |> length)
+    if mask_lines
+        for r in eachrow(linelist)
+            # if r[!,:foverha] < min_strength
+            if r.foverha < min_strength
                 continue
             end
-        end
-        println(" Input file:  $(inpath)\n Output file:  $(outpaths[thing])")
-        data, wave, contsub = cont_subt(inpath, saveit=saveit, outpath=outpaths[thing], setting=thing)
+            #= cenwave =  mod[comp].lab_wave.val * (1 + mod[comp].redshift.val) =#
+            cenwave = r.lamvac * (1 + redshift)
+            window_width_ang = v_to_deltawl(velwidth, cenwave)
+            @debug "Make line mask: " wave window_width_ang
+            mask[cenwave-window_width_ang .< wave .< cenwave+window_width_ang] .= 0
+            # So we can interpolate properly:
+            mask[1] = mask[end] = 1
+        end 
     end
-    return nothing
+
+    if fancy
+        # Despite being fancy, this method is actually worse!
+        # But I keep it because it is good to have infrastructure that
+        # calls an external function, then can just rewrite the 
+        # external function.
+        mask = .~mask
+        mask .|= (inspec[!,:flux] .|> isnan)
+        mask[1] = mask[end] = 0
+        outspec = subtract_continuum(inspec, mask; pix_window=window_pix,  sig_lim=clip_sigmas)
+        ipl = LinearInterpolation(wave,outspec[!, :continuum])(wave)
+    else
+        # Despite its simplicity, this method seems unreasonably good!
+        # specvec = inarray[i, j, :] |> deepcopy
+        # spec = inarray[i, j, :][mask]
+        spec = inspec[!, flab][mask]
+        #= Sigma clip the (possibly line-masked) spectrum =#
+        scwave = wave[mask]
+        scspec = deepcopy(spec)
+        scmask = trues(size(scwave))
+        scmask[abs.(scspec) .> nanmedian(scspec) + clip_sigmas .* nanstd(scspec)] .= 0
+        scmask[1] = scmask[end] = 1  # Must be included to allow interpolationc
+        finalspec, finalwave = scspec[scmask], scwave[scmask]
+        continuum = running_median(finalspec, window_pix, nan=:ignore)
+        ipl = LinearInterpolation(finalwave, continuum)(wave)
+    end
+    outspec[!, clab] = ipl
+    outspec[!, flab] = inspec[!, flab] .- ipl
+    return outspec
 end
+
+
+# function subtract_continuum(spec, mask=nothing; pix_window=31, sig_lim=3, plotit=false)
+#     # STRATEGY: 
+#     # 1. Mask around lines
+#     # 2. Smooth the remaining pixels, subtract the smoothed.
+#     # 3. Take Std. of diff, add to massk all where diff is more than
+#     #    sig_lim std's. 
+#     # if mask isa Nothing; mask = zeros(length(spec)); end
+#     origmask = mask |> copy
+#     specm = spec[.~mask, :]
+#     med1 = running_median(specm[!, :flux], pix_window, nan=:ignore)
+#     # Back to orig wave grid
+#     # println(size(specm), "  ,  ", size(spec))
+#     med1ipl = LinearInterpolation(specm[!, :wave], med1)(spec[!, :wave])
+#     med2ipl = running_median(med1ipl, (pix_window * 3) + 0, nan=:ignore)
+#     meddiff = med1ipl - med2ipl
+#     std2 = nanstd(meddiff)
+#     mask2 = abs.(meddiff) .> sig_lim * std2
+#     mask .|= mask2
+#     spec[!, :contmask] = mask
+#
+#     specm = spec[.~mask, :]
+#     med3 = running_median(specm[!, :flux], pix_window, nan=:ignore)
+#     med3ipl = LinearInterpolation(specm[!, :wave], med3)(spec[!, :wave])
+#     ### NOW, 
+#     #   - subtract continuum-thus-far from original data, 
+#     #   - Mask out known mask thingies, 
+#     #   - Sigma clip the rest, add to mask.
+#     meddiff3 = spec[!, :flux] .- med3ipl
+#     std3 = nanstd(meddiff3[.~mask])
+#     mask3 = abs.(meddiff3) .> sig_lim * std3
+#     mask .|= mask3
+#     spec[!, :contmask] = mask
+#     specm = spec[.~mask, :]
+#     med4 = running_median(specm[!, :flux], pix_window, nan=:ignore)
+#     med4ipl = LinearInterpolation(specm[!, :wave], med4)(spec[!, :wave])
+#     spec[!, :continuum] = med4ipl
+#     if plotit
+#         figure()
+#         plot(spec[!, :wave]./zz, spec[!, :flux])
+#         plot(spec[!, :wave]./zz, med3ipl)
+#         plot(spec[!, :wave]./zz, mask)
+#         plot(spec[!, :wave]./zz, origmask .* 0.9)
+#         plot(spec[!, :wave]./zz, med4ipl)
+#         plot(spec[!, :wave]./zz, mask .* 1.1)
+#     end
+#     return spec
+# end
+#
+#
+# """    continuum_subtract_and_save()
+#
+# Continuum subtract a FITS Datacube file, and optionally write the result to a new file.
+#
+# This function contains the plumbing, or bookkeeping, or whatever you call it. For the actual
+# subraction, it calls the function `cont_subt()`. This function is in turn called by
+# `contsub_many()`.
+#
+# This function requires the datadicts to be populated with reasonable names and file paths.
+# ## Input
+# - `inpath::String`: Path to the non-subtracted datacube file.
+# ## Optional input
+# - `saveit::Bool`: Whether or not to save the generated output. For safety reasons, it is
+#   set to `false` by default.
+# - `outpath::String`: Path to the output file.
+#   Default: `"continuum_subtracted.fits"`.
+# - `clip_sigmas::Float64`: Continuum subtraction works on sigma clipped data. This argument
+#   allows to customize how strong the clipping should be. Default value is `3`.
+# - `window_pix::Int`: Pixel width of the rolling window in which the median is taken.
+#   Default value is `51`. Odd numbers give better results.
+# ## Returns
+# - `out::Dict`: Mainly for convenience, the function returns a `Dict` containing a continuum
+#   subtracted data cube, an unaltered error cube, as well as FITS headers from both the primary
+#   and the data extension of the input FITS file.
+# """
+# function continuum_subtract_and_save(
+#     inpath::String;
+#     saveit=false::Bool,
+#     outpath="continuum_subtracted.fits"::String,
+#     clip_sigmas=3.::Float64,
+#     window_pix=51::Int,
+#     )::Dict
+#     # This is just for convenience, if I want to define some shortcuts for some of the file names,
+#     # making it easier to call the function interactively.
+#     if inpath in keys(pathsdict)
+#         datadict = load_fits_cube_contsub(pathsdict[inpath])
+#     else 
+#         datadict = load_fits_cube_contsub(inpath)
+#     end 
+#
+#     contsubt = cont_subt(datadict["Data"], clip_sigmas=clip_sigmas, window_pix=window_pix)
+#
+#     if saveit == true
+#         outfile = FITS(outpath, "w")
+#         write(outfile, Float64[], header=datadict["Primary header"])
+#         write(outfile, contsubt; header=datadict["Header"], name="SCI")
+#         write(outfile, datadict["Errs"], header=datadict["Header"], name="ERR")
+#         close(outfile)
+#     end
+#     datadict["Cont.subt."] = contsubt
+#     return datadict
+# end
+#
+
+# """
+# # Continuum subtract one or more files
+# Continuum subtracts a a single file and save the result to a new file.
+# """
+# function contsub_many(which="all"::String; saveit=false::Bool)
+#     for (thing, inpath) in pathsdict
+#         if which != "all"
+#             if which != thing
+#                 continue
+#             end
+#         end
+#         println(" Input file:  $(inpath)\n Output file:  $(outpaths[thing])")
+#         data, wave, contsub = cont_subt(inpath, saveit=saveit, outpath=outpaths[thing], setting=thing)
+#     end
+#     return nothing
+# end

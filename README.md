@@ -12,9 +12,9 @@ A package for automatically fitting emission lines in astronomical spectral cube
 Hopefully, this could develop into a more general package for handling spectral cubes in
 Julia.
 
-Development is still in early days, so everything may break - but currently, the NIRSpec
-related code _Works For Me™_. I am in the process of testing it for MIRI and MUSE, and
-most other instruments should be quite easy to add as well.
+The code _Works For Me™_, and I have gotten reports from a few students and collaborators that it works fine for them, too. 
+At the moment JWST/NIRSpec IFU and ESO/MUSE cubes are supported, and I am looking into 
+implementing JWST/MIRI MRS cubes too. Most other instruments should be relatively simple to implement further down the road.
 
 
 ## What does it do (and how)?
@@ -260,12 +260,12 @@ In order of approximate priority:
 - [x] Implement Voronoi binning
 - [x] Spectrum extraction and fitting from arbitrary masks, e.g. segmentation
   maps or Voronoi bins.
+- [x] Implement MUSE cubes.
 - [ ] Allow user to fix ratio between lines of doublets with shared upper
   levels.
 - [ ] Create interface to select lines to always fit together (useful for
   blended features).
-- [ ] Test and ensure the `MUSECube` and `MIRICube` structs actually work as
-  advertised
+- [ ] Implement MIRI MRS cubes.
 - [ ] Implement adaptive binning (lower priority now that Voronoi binning is
   implemented).
 - [ ] Add support for more instruments. Suggestions welcome (especially if

@@ -140,7 +140,7 @@ function get_resolving_power(instrument::String; setting=nothing::Any)
     if lowercase(instrument) == "nirspec"
         return(get_resolving_power_nirspec(setting))
     elseif lowercase(instrument) == "muse"
-        return get_resolving_power_muse(degree=setting)
+        return get_resolving_power_muse(order=setting)
     else
     end
 end
@@ -167,6 +167,27 @@ function get_resolving_power_nirspec(grating::String; calib_path=datapath)
     itp = LinearInterpolation(ustrip.(angwave), R, extrapolation_bc=Flat())
     return itp
 end
+
+
+"""     get_resolving_power_muse(; order=3)
+## Optional arguments
+- `order::Int`: The order of the polynomial to fit to the datapoints. Default is 3.
+## Returns
+- A callable `Polynomials.Polynomial` object which returns the linearly interpolated
+  resolving power at the wavelength passed to it.
+"""
+function get_resolving_power_muse(;order=3::Int)
+    ll = Array{Float64}(
+        [4650.0, 5000.0, 5500.0, 6000.0, 6500.0, 7000.0,
+         7500.0, 8000.0, 8500.0, 9000.0, 9350.0])
+    rr = Array{Float64}(
+        [1609, 1750, 1978, 2227, 2484, 2737,
+         2975, 3183, 3350, 3465, 3506])
+    drr = Array{Float64}([6, 4, 6, 6, 5, 4, 4, 4, 4, 5, 10])
+    p = Polynomials.fit(ll, rr, order, weights=1. ./ drr)
+    return p
+end
+
 
 
 """    convert_ergscms_Å_units(datadict::Dict; instrument="NIRSpec")
@@ -985,7 +1006,7 @@ to be user facing.
 - A Tuple of the same two arrays, with the `NaN` values replaced as described above.
 """
 function nanmask10(
-    flux::Array{Float64}, dflux::Array{Float64})::BitVector
+    flux::Array, dflux::Array)::BitVector
     idx1 = (.!isnan.(flux)) .& (.!isnan.(dflux)) .& (dflux .!= 0.)
     idx = idx1
     return idx
@@ -1023,27 +1044,6 @@ function estimate_line_snr(wave, flux; err=nothing, only_flux=false)
     if only_flux; return Measurements.value(usum); end
     return snr
 end 
-
-
-"""     get_resolving_power_muse(; order=3)
-## Optional arguments
-- `order::Int`: The order of the polynomial to fit to the datapoints. Default is 3.
-## Returns
-- A callable `Polynomials.Polynomial` object which returns the linearly interpolated
-  resolving power at the wavelength passed to it.
-"""
-function get_resolving_power_muse(;order=3::Int)
-    ll = Array{Float64}(
-        [4650.0, 5000.0, 5500.0, 6000.0, 6500.0, 7000.0,
-         7500.0, 8000.0, 8500.0, 9000.0, 9350.0])
-    rr = Array{Float64}(
-        [1609, 1750, 1978, 2227, 2484, 2737,
-         2975, 3183, 3350, 3465, 3506])
-    drr = Array{Float64}([6, 4, 6, 6, 5, 4, 4, 4, 4, 5, 10])
-    p = Polynomials.fit(ll, rr, order, weights=1. ./ drr)
-    return p
-end
-
 
 
 """    fill_in_fit_values(dict::Dict, fitresults::Dict, pix_coords::Tuple{Int,Int}; fitstats=NaN)

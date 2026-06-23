@@ -38,6 +38,7 @@ VoronoiBinning = "0480b74a-4474-4b41-b184-abfd81603c41"
 UseVoronoiBin = "VoronoiBinning"
 
 [compat]
+<<<<<<< HEAD
 GModelFit = "0.5.2 - 0.7.6"
 ProgressMeter = "1.11.0"
 PythonPlot = "1.0.6"

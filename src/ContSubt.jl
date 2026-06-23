@@ -58,9 +58,10 @@ function cont_subt(incube;
     end
     naxis1, naxis2 = size(inarray)
     # Iterate over the spatial dimensions and populate the spectral datacube
-    @track for i in 1:naxis1
+    # @track for i in 1:naxis1
+    @showprogress @threads for i in 1:naxis1
         for j in 1:naxis2
-            @printf("Now continuum subtracting row %03d, col. %03d. \r", i, j)
+            # @printf("Now continuum subtracting row %03d, col. %03d. \r", i, j)
             flush(stdout)
             if fancy
                 # Despite being fancy, this method is actually worse!

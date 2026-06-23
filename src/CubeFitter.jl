@@ -18,6 +18,7 @@ using UnitfulAstro
 using UnitfulEquivalences 
 using Measurements
 using Uncertain
+using Base.Threads
 # Is the next one really necessary, or should I just hardcode the constants?
 using PhysicalConstants.CODATA2018
 # Data formats, table, the works
@@ -36,8 +37,10 @@ import Interpolations: LinearInterpolation
 using NumericalIntegration
 import NumericalIntegration as nui
 import Plots
-using Term.Progress
-
+# # Pretty but doesn't run in notebooks and also not good with threads:
+# using Term.Progress  
+using ProgressMeter
+ProgressMeter.ijulia_behavior(:clear)  # TODO: Check up whether this is still necessary
 # Spectroscopic helper functions
 include("./SpecHelpers.jl")
 using .SpecHelpers
@@ -50,8 +53,10 @@ datapath = joinpath(dirname(pathof(CubeFitter)), "..", "static_data")
 include("./ContSubt.jl")
 export cont_subt, cont_subt_spectrum
 
-# The spectral cube types
+# Instrument specific types and functions:
 include("./SpectralCubes.jl")
+include("./NIRSpec.jl")
+include("./MUSE.jl")
 export AbstractSpectralCube, NIRSpecCube, MUSECube, MIRICube
 
 
@@ -146,48 +151,48 @@ function get_resolving_power(instrument::String; setting=nothing::Any)
 end
 
 
-"""     get_resolving_power_nirspec(grating[, calib_path="../static_data/"])
-This function assumes that the FITS files containing the NIRSpec grating resolving power
-are named "jwst_nirspec_[grating]_disp.fits", as fetched from the official JDox.
-# Arguments
-- `grating::String`: The name of the grating used.
-# Keywords
-- `calib_path::String`: Path to the location of the calibration data, defaults to  the data folder installed with the package.
-# Returns
-- A callable `Interpolations.Extrapolation` objects which returns the linearly 
-  interpolated resolving power at the wavelength passed to it.
-"""
-function get_resolving_power_nirspec(grating::String; calib_path=datapath) 
-    lsffilename = "jwst_nirspec_$(grating)_disp.fits"
-    @debug "Path to LSF file: " calib_path * lsffilename
-    fitsfile = FITS(joinpath(calib_path, lsffilename))
-    angwave = read(fitsfile[2], "WAVELENGTH") * u"μm" .|> u"angstrom"
-    R = read(fitsfile[2], "R")
-    @debug extrema(angwave) extrema(R)
-    itp = LinearInterpolation(ustrip.(angwave), R, extrapolation_bc=Flat())
-    return itp
-end
+# """     get_resolving_power_nirspec(grating[, calib_path="../static_data/"])
+# This function assumes that the FITS files containing the NIRSpec grating resolving power
+# are named "jwst_nirspec_[grating]_disp.fits", as fetched from the official JDox.
+# # Arguments
+# - `grating::String`: The name of the grating used.
+# # Keywords
+# - `calib_path::String`: Path to the location of the calibration data, defaults to  the data folder installed with the package.
+# # Returns
+# - A callable `Interpolations.Extrapolation` objects which returns the linearly 
+#   interpolated resolving power at the wavelength passed to it.
+# """
+# function get_resolving_power_nirspec(grating::String; calib_path=datapath) 
+#     lsffilename = "jwst_nirspec_$(grating)_disp.fits"
+#     @debug "Path to LSF file: " calib_path * lsffilename
+#     fitsfile = FITS(joinpath(calib_path, lsffilename))
+#     angwave = read(fitsfile[2], "WAVELENGTH") * u"μm" .|> u"angstrom"
+#     R = read(fitsfile[2], "R")
+#     @debug extrema(angwave) extrema(R)
+#     itp = LinearInterpolation(ustrip.(angwave), R, extrapolation_bc=Flat())
+#     return itp
+# end
 
 
-"""     get_resolving_power_muse(; order=3)
-## Optional arguments
-- `order::Int`: The order of the polynomial to fit to the datapoints. Default is 3.
-## Returns
-- A callable `Polynomials.Polynomial` object which returns the linearly interpolated
-  resolving power at the wavelength passed to it.
-"""
-function get_resolving_power_muse(;order=3::Int)
-    ll = Array{Float64}(
-        [4650.0, 5000.0, 5500.0, 6000.0, 6500.0, 7000.0,
-         7500.0, 8000.0, 8500.0, 9000.0, 9350.0])
-    rr = Array{Float64}(
-        [1609, 1750, 1978, 2227, 2484, 2737,
-         2975, 3183, 3350, 3465, 3506])
-    drr = Array{Float64}([6, 4, 6, 6, 5, 4, 4, 4, 4, 5, 10])
-    p = Polynomials.fit(ll, rr, order, weights=1. ./ drr)
-    return p
-end
-
+# """     get_resolving_power_muse(; order=3)
+# ## Optional arguments
+# - `order::Int`: The order of the polynomial to fit to the datapoints. Default is 3.
+# ## Returns
+# - A callable `Polynomials.Polynomial` object which returns the linearly interpolated
+#   resolving power at the wavelength passed to it.
+# """
+# function get_resolving_power_muse(;order=3::Int)
+#     ll = Array{Float64}(
+#         [4650.0, 5000.0, 5500.0, 6000.0, 6500.0, 7000.0,
+#          7500.0, 8000.0, 8500.0, 9000.0, 9350.0])
+#     rr = Array{Float64}(
+#         [1609, 1750, 1978, 2227, 2484, 2737,
+#          2975, 3183, 3350, 3465, 3506])
+#     drr = Array{Float64}([6, 4, 6, 6, 5, 4, 4, 4, 4, 5, 10])
+#     p = Polynomials.fit(ll, rr, order, weights=1. ./ drr)
+#     return p
+# end
+#
 
 
 """    convert_ergscms_Å_units(datadict::Dict; instrument="NIRSpec")
@@ -631,9 +636,9 @@ function fit_cube(cube; broad_component=false, min_snr=1.0, line_selection=nothi
 
     @debug "Made slices_dict"
 
-    @track for f in (segmap |> unique |> sort)
+    @showprogress @threads for f in (segmap |> unique |> sort)
         thismask = segmap .== f
-        print("Fitting segment No. $f with $(thismask |> sum) spaxels \r")
+        # print("Fitting segment No. $f with $(thismask |> sum) spaxels \r")
         numnan = count(isnan.(cube.fluxcube[thismask, :]))
         testspec, testerr = make_spectrum_from_cutout(cube; mask=thismask)
         nanratio = count(isnan.(testspec)) / length(testspec)
@@ -683,12 +688,13 @@ function fit_cube(cube; broad_component=false, min_snr=1.0, line_selection=nothi
     slices_dict[:mom1] = stack([value.(mom1), uncertainty.(mom1)], dims=3)
     slices_dict[:mom2] = stack([value.(mom2), uncertainty.(mom2)], dims=3)
     # Remove empty slices
-    println(slices_dict |> keys)
-    println("Entries in the slices dict before pruning: $(slices_dict |> keys |> length)")
+    # println(slices_dict |> keys)
+    # println("Entries in the slices dict before pruning: $(slices_dict |> keys |> length)")
+    @info slices_dict |> keys
     for s in slices_dict |> keys
         if !(slices_dict[s] isa Array); continue; end
         slice = slices_dict[s][:,:,1]
-        println("for slice $s, there were $(count(isnan.(slice))) nans out of $(length(slice))")
+        # println("for slice $s, there were $(count(isnan.(slice))) nans out of $(length(slice))")
         if count(isnan.(slice)) == length(slice)
             delete!(slices_dict, s)
             continue
@@ -904,15 +910,16 @@ function calculate_moments(cube; refline=nothing, window_kms::Float64=1000.)
   if isa(refline, Nothing)
     refline = cube.ref_line
   end 
-  println("Reference line: $refline")
+  # println("Reference line: $refline")
+  # println("")
   lam_rest = cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1]
   lam_obs = lam_rest * (1 + cube.z_init)  
   # cube.linelist[cube.linelist.name .|> String .== refline |> String, :lamvac][1] * (1 + cube.z_init)
-  println("$lam_rest, $lam_obs")
+  # println("$lam_rest, $lam_obs")
   window_ang = v_to_deltawl(window_kms/2, lam_obs)
   idx = lam_obs - window_ang .< cube.wave .< lam_obs + window_ang
   waves, flux = cube.wave[idx], cube.fluxcube[:,:,idx] .± cube.errscube[:,:,idx]
-  println("Calculate moments: Size of flux chunk is: ", size(flux))
+  # println("Calculate moments: Size of flux chunk is: ", size(flux))
   # Make sure things are well formatted now before they get passed along.
   @assert size(waves)[1] == size(flux)[3]
   # Empty arrays to fill in:

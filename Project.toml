@@ -1,6 +1,6 @@
 name = "CubeFitter"
 uuid = "dc4e8925-179f-4201-9ae1-2609c7232911"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["T. Emil Rivera-Thorsen <trive@astro.su.se>"]
 
 [deps]
@@ -21,6 +21,7 @@ PhysicalConstants = "5ad8b20f-a522-5ce9-bfc9-ddf1d5bda6ab"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Term = "22787eb5-b846-44ae-b979-8e399b8463ab"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Uncertain = "b33f403f-199b-472b-b9d0-1cd2092892d0"
@@ -37,7 +38,8 @@ VoronoiBinning = "0480b74a-4474-4b41-b184-abfd81603c41"
 UseVoronoiBin = "VoronoiBinning"
 
 [compat]
-GModelFit = "0.5.2 - 0.7.0"
+GModelFit = "0.5.2 - 0.7.6"
+ProgressMeter = "1.11.0"
 PythonPlot = "1.0.6"
 Uncertain = "0.1.20"
 UnitfulAngles = "0.7.2"
